@@ -5,9 +5,27 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
 
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    Integer,
+    Numeric,
+    String,
+)
+
 
 class Medicine(Base):
     __tablename__ = "medicines"
+    __table_args__ = (
+    CheckConstraint(
+        "unit_price >= 0",
+        name="ck_medicines_unit_price_nonnegative",
+    ),
+    CheckConstraint(
+        "stock_quantity >= 0",
+        name="ck_medicines_stock_nonnegative",
+    ),
+)
 
     medicine_id: Mapped[int] = mapped_column(
         BigInteger,

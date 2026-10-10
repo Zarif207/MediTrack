@@ -3,9 +3,30 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
 
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
+
 
 class PrescriptionItem(Base):
     __tablename__ = "prescription_items"
+    __table_args__ = (
+    UniqueConstraint(
+        "prescription_id",
+        "medicine_id",
+        name="uq_prescription_medicine",
+    ),
+    CheckConstraint(
+        "quantity > 0",
+        name="ck_prescription_items_quantity_positive",
+    ),
+)
+
 
     prescription_item_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -52,10 +73,10 @@ class PrescriptionItem(Base):
         back_populates="prescription_items",
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "prescription_id",
-            "medicine_id",
-            name="uq_prescription_medicine",
-        ),
-    )
+    # __table_args__ = (
+    #     UniqueConstraint(
+    #         "prescription_id",
+    #         "medicine_id",
+    #         name="uq_prescription_medicine",
+    #     ),
+    # )

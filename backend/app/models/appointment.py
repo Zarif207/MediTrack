@@ -5,9 +5,26 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
 
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    Time,
+)
+
 
 class Appointment(Base):
     __tablename__ = "appointments"
+    __table_args__ = (
+    CheckConstraint(
+        "status IN ('scheduled', 'confirmed', 'completed', 'cancelled', 'no_show')",
+        name="ck_appointments_status",
+    ),
+)
 
     appointment_id: Mapped[int] = mapped_column(
         BigInteger,

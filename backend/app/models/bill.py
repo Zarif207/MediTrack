@@ -6,9 +6,33 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
 
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    String,
+)
+
 
 class Bill(Base):
     __tablename__ = "bills"
+    __table_args__ = (
+    CheckConstraint(
+        "amount >= 0",
+        name="ck_bills_amount_nonnegative",
+    ),
+    CheckConstraint(
+        "payment_status IN ('pending', 'paid', 'cancelled')",
+        name="ck_bills_payment_status",
+    ),
+    CheckConstraint(
+        "(payment_status = 'paid' AND paid_at IS NOT NULL) OR "
+        "(payment_status IN ('pending', 'cancelled') AND paid_at IS NULL)",
+        name="ck_bills_paid_at_consistency",
+    ),
+)
 
     bill_id: Mapped[int] = mapped_column(
         BigInteger,
