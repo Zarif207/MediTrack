@@ -1,0 +1,68 @@
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy.orm import Session
+
+from app.database.dependencies import get_db
+from app.schemas.prescription import (
+    PrescriptionCreate,
+    PrescriptionResponse,
+    PrescriptionUpdate,
+)
+from app.services.prescription_service import (
+    create_prescription,
+    delete_prescription,
+    get_prescription,
+    get_prescriptions,
+    update_prescription,
+)
+
+router = APIRouter(prefix="/prescriptions", tags=["Prescriptions"])
+
+
+@router.post("/", response_model=PrescriptionResponse, status_code=201)
+def create_prescription_endpoint(
+    data: PrescriptionCreate, db: Session = Depends(get_db)
+):
+    return create_prescription(db, data)
+
+
+@router.get("/", response_model=list[PrescriptionResponse])
+def list_prescriptions(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    record_id: int | None = Query(default=None, gt=0),
+    db: Session = Depends(get_db),
+):
+    return get_prescriptions(db, skip, limit, record_id)
+
+
+@router.get("/{prescription_id}", response_model=PrescriptionResponse)
+def retrieve_prescription(
+    prescription_id: int, db: Session = Depends(get_db)
+):
+    prescription = get_prescription(db, prescription_id)
+    if prescription is None:
+        raise HTTPException(status_code=404, detail="Prescription not found.")
+    return prescription
+
+
+@router.patch("/{prescription_id}", response_model=PrescriptionResponse)
+def edit_prescription(
+    prescription_id: int,
+    data: PrescriptionUpdate,
+    db: Session = Depends(get_db),
+):
+    prescription = get_prescription(db, prescription_id)
+    if prescription is None:
+        raise HTTPException(status_code=404, detail="Prescription not found.")
+    return update_prescription(db, prescription, data)
+
+
+@router.delete("/{prescription_id}", status_code=204)
+def remove_prescription(
+    prescription_id: int, db: Session = Depends(get_db)
+):
+    prescription = get_prescription(db, prescription_id)
+    if prescription is None:
+        raise HTTPException(status_code=404, detail="Prescription not found.")
+    delete_prescription(db, prescription)
+    return Response(status_code=204)
