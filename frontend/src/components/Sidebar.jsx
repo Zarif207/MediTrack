@@ -14,19 +14,21 @@ import {
   RiCloseLine,
   RiHeartPulseLine,
   RiHomeLine,
+  RiUserSettingsLine,
 } from 'react-icons/ri'
+import { useAuth } from '../context/useAuth'
 
 const NAV_ITEMS = [
-  { to: '/dashboard', icon: RiDashboardLine, label: 'Dashboard' },
-  { to: '/patients', icon: RiUserHeartLine, label: 'Patients' },
-  { to: '/doctors', icon: RiUserStarLine, label: 'Doctors' },
-  { to: '/departments', icon: RiBuildingLine, label: 'Departments' },
-  { to: '/appointments', icon: RiCalendarCheckLine, label: 'Appointments' },
-  { to: '/medical-records', icon: RiFileList3Line, label: 'Medical Records' },
-  { to: '/prescriptions', icon: RiCapsuleLine, label: 'Prescriptions' },
-  { to: '/medicines', icon: RiMedicineBottleLine, label: 'Medicines' },
-  { to: '/prescription-items', icon: RiListCheck3, label: 'Rx Items' },
-  { to: '/bills', icon: RiMoneyDollarCircleLine, label: 'Bills' },
+  { to: '/dashboard',          icon: RiDashboardLine,       label: 'Dashboard' },
+  { to: '/patients',           icon: RiUserHeartLine,       label: 'Patients' },
+  { to: '/doctors',            icon: RiUserStarLine,        label: 'Doctors' },
+  { to: '/departments',        icon: RiBuildingLine,        label: 'Departments' },
+  { to: '/appointments',       icon: RiCalendarCheckLine,   label: 'Appointments' },
+  { to: '/medical-records',    icon: RiFileList3Line,       label: 'Medical Records' },
+  { to: '/prescriptions',      icon: RiCapsuleLine,         label: 'Prescriptions' },
+  { to: '/medicines',          icon: RiMedicineBottleLine,  label: 'Medicines' },
+  { to: '/prescription-items', icon: RiListCheck3,          label: 'Rx Items' },
+  { to: '/bills',              icon: RiMoneyDollarCircleLine, label: 'Bills' },
 ]
 
 function NavItem({ to, icon: Icon, label, collapsed, onClick }) {
@@ -48,6 +50,9 @@ function NavItem({ to, icon: Icon, label, collapsed, onClick }) {
 }
 
 export default function Sidebar({ collapsed, mobileOpen, onMobileClose }) {
+  const { profile } = useAuth()
+  const isAdmin = profile?.role === 'admin'
+
   return (
     <>
       {/* Mobile overlay */}
@@ -104,6 +109,24 @@ export default function Sidebar({ collapsed, mobileOpen, onMobileClose }) {
               onClick={onMobileClose}
             />
           ))}
+
+          {/* Admin-only section */}
+          {isAdmin && (
+            <>
+              {!collapsed && (
+                <p className="px-3 pt-4 pb-1 text-xs font-semibold text-navy-500 uppercase tracking-wider">
+                  Admin
+                </p>
+              )}
+              <NavItem
+                to="/admin/users"
+                icon={RiUserSettingsLine}
+                label="User Roles"
+                collapsed={collapsed}
+                onClick={onMobileClose}
+              />
+            </>
+          )}
         </nav>
 
         {/* Footer link — back to public home */}

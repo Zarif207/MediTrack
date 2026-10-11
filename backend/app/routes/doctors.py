@@ -1,7 +1,11 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_roles
 from app.database.dependencies import get_db
+from app.models.user_profile import UserProfile
 from app.schemas.doctor import DoctorCreate, DoctorResponse, DoctorUpdate
 from app.services.doctor_service import (
     create_doctor,
@@ -11,6 +15,8 @@ from app.services.doctor_service import (
     update_doctor,
 )
 
+# Doctor reads are open (public website shows doctor directory)
+_WRITE_ROLES = require_roles("admin")
 
 router = APIRouter(prefix="/doctors", tags=["Doctors"])
 
@@ -22,6 +28,7 @@ router = APIRouter(prefix="/doctors", tags=["Doctors"])
 )
 def create_doctor_endpoint(
     data: DoctorCreate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
     db: Session = Depends(get_db),
 ):
     return create_doctor(db, data)
@@ -42,10 +49,8 @@ def retrieve_doctor(
     db: Session = Depends(get_db),
 ):
     doctor = get_doctor(db, doctor_id)
-
     if doctor is None:
         raise HTTPException(status_code=404, detail="Doctor not found.")
-
     return doctor
 
 
@@ -53,25 +58,23 @@ def retrieve_doctor(
 def edit_doctor(
     doctor_id: int,
     data: DoctorUpdate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
     db: Session = Depends(get_db),
 ):
     doctor = get_doctor(db, doctor_id)
-
     if doctor is None:
         raise HTTPException(status_code=404, detail="Doctor not found.")
-
     return update_doctor(db, doctor, data)
 
 
 @router.delete("/{doctor_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_doctor(
     doctor_id: int,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
     db: Session = Depends(get_db),
 ):
     doctor = get_doctor(db, doctor_id)
-
     if doctor is None:
         raise HTTPException(status_code=404, detail="Doctor not found.")
-
     delete_doctor(db, doctor)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

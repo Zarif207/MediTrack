@@ -1,7 +1,11 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user, require_roles
 from app.database.dependencies import get_db
+from app.models.user_profile import UserProfile
 from app.schemas.patient import PatientCreate, PatientResponse, PatientUpdate
 from app.services.patient_service import (
     create_patient,
@@ -11,6 +15,10 @@ from app.services.patient_service import (
     update_patient,
 )
 
+# Roles that can read patient data
+_READ_ROLES = require_roles("admin", "receptionist", "doctor", "patient")
+# Roles that can write patient data
+_WRITE_ROLES = require_roles("admin", "receptionist")
 
 router = APIRouter(prefix="/patients", tags=["Patients"])
 
@@ -22,6 +30,7 @@ router = APIRouter(prefix="/patients", tags=["Patients"])
 )
 def create_patient_endpoint(
     data: PatientCreate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
     db: Session = Depends(get_db),
 ):
     return create_patient(db, data)
@@ -31,6 +40,7 @@ def create_patient_endpoint(
 def list_patients(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    current_user: Annotated[UserProfile, Depends(_READ_ROLES)] = None,
     db: Session = Depends(get_db),
 ):
     return get_patients(db, skip=skip, limit=limit)
@@ -39,16 +49,12 @@ def list_patients(
 @router.get("/{patient_id}", response_model=PatientResponse)
 def retrieve_patient(
     patient_id: int,
+    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
     db: Session = Depends(get_db),
 ):
     patient = get_patient(db, patient_id)
-
     if patient is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient not found.",
-        )
-
+        raise HTTPException(status_code=404, detail="Patient not found.")
     return patient
 
 
@@ -56,31 +62,23 @@ def retrieve_patient(
 def edit_patient(
     patient_id: int,
     data: PatientUpdate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
     db: Session = Depends(get_db),
 ):
     patient = get_patient(db, patient_id)
-
     if patient is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient not found.",
-        )
-
+        raise HTTPException(status_code=404, detail="Patient not found.")
     return update_patient(db, patient, data)
 
 
 @router.delete("/{patient_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_patient(
     patient_id: int,
+    _: Annotated[UserProfile, Depends(require_roles("admin"))],
     db: Session = Depends(get_db),
 ):
     patient = get_patient(db, patient_id)
-
     if patient is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient not found.",
-        )
-
+        raise HTTPException(status_code=404, detail="Patient not found.")
     delete_patient(db, patient)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

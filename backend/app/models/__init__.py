@@ -7,6 +7,7 @@ from app.models.medicine import Medicine
 from app.models.patient import Patient
 from app.models.prescription import Prescription
 from app.models.prescription_item import PrescriptionItem
+from app.models.user_profile import UserProfile
 
 __all__ = [
     "Department",
@@ -18,4 +19,5 @@ __all__ = [
     "Medicine",
     "PrescriptionItem",
     "Bill",
+    "UserProfile",
 ]

@@ -1,7 +1,11 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_roles
 from app.database.dependencies import get_db
+from app.models.user_profile import UserProfile
 from app.schemas.prescription import (
     PrescriptionCreate,
     PrescriptionResponse,
@@ -15,12 +19,17 @@ from app.services.prescription_service import (
     update_prescription,
 )
 
+_READ_ROLES = require_roles("admin", "doctor", "pharmacist")
+_WRITE_ROLES = require_roles("admin", "doctor")
+
 router = APIRouter(prefix="/prescriptions", tags=["Prescriptions"])
 
 
 @router.post("/", response_model=PrescriptionResponse, status_code=201)
 def create_prescription_endpoint(
-    data: PrescriptionCreate, db: Session = Depends(get_db)
+    data: PrescriptionCreate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
+    db: Session = Depends(get_db),
 ):
     return create_prescription(db, data)
 
@@ -30,6 +39,7 @@ def list_prescriptions(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     record_id: int | None = Query(default=None, gt=0),
+    _: Annotated[UserProfile, Depends(_READ_ROLES)] = None,
     db: Session = Depends(get_db),
 ):
     return get_prescriptions(db, skip, limit, record_id)
@@ -37,7 +47,9 @@ def list_prescriptions(
 
 @router.get("/{prescription_id}", response_model=PrescriptionResponse)
 def retrieve_prescription(
-    prescription_id: int, db: Session = Depends(get_db)
+    prescription_id: int,
+    _: Annotated[UserProfile, Depends(_READ_ROLES)] = None,
+    db: Session = Depends(get_db),
 ):
     prescription = get_prescription(db, prescription_id)
     if prescription is None:
@@ -49,6 +61,7 @@ def retrieve_prescription(
 def edit_prescription(
     prescription_id: int,
     data: PrescriptionUpdate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
     db: Session = Depends(get_db),
 ):
     prescription = get_prescription(db, prescription_id)
@@ -59,7 +72,9 @@ def edit_prescription(
 
 @router.delete("/{prescription_id}", status_code=204)
 def remove_prescription(
-    prescription_id: int, db: Session = Depends(get_db)
+    prescription_id: int,
+    _: Annotated[UserProfile, Depends(require_roles("admin"))],
+    db: Session = Depends(get_db),
 ):
     prescription = get_prescription(db, prescription_id)
     if prescription is None:

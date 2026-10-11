@@ -1,7 +1,11 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_roles
 from app.database.dependencies import get_db
+from app.models.user_profile import UserProfile
 from app.schemas.department import (
     DepartmentCreate,
     DepartmentResponse,
@@ -15,6 +19,9 @@ from app.services.department_service import (
     update_department,
 )
 
+# Department reads are open (public website shows departments/doctors without login)
+# Writes require admin or receptionist
+_WRITE_ROLES = require_roles("admin", "receptionist")
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
 
@@ -26,6 +33,7 @@ router = APIRouter(prefix="/departments", tags=["Departments"])
 )
 def create_department_endpoint(
     data: DepartmentCreate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
     db: Session = Depends(get_db),
 ):
     return create_department(db, data)
@@ -46,10 +54,8 @@ def retrieve_department(
     db: Session = Depends(get_db),
 ):
     department = get_department(db, department_id)
-
     if department is None:
         raise HTTPException(status_code=404, detail="Department not found.")
-
     return department
 
 
@@ -57,25 +63,23 @@ def retrieve_department(
 def edit_department(
     department_id: int,
     data: DepartmentUpdate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
     db: Session = Depends(get_db),
 ):
     department = get_department(db, department_id)
-
     if department is None:
         raise HTTPException(status_code=404, detail="Department not found.")
-
     return update_department(db, department, data)
 
 
 @router.delete("/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_department(
     department_id: int,
+    _: Annotated[UserProfile, Depends(require_roles("admin"))],
     db: Session = Depends(get_db),
 ):
     department = get_department(db, department_id)
-
     if department is None:
         raise HTTPException(status_code=404, detail="Department not found.")
-
     delete_department(db, department)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

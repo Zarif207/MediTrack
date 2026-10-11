@@ -1,7 +1,11 @@
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import require_roles
 from app.database.dependencies import get_db
+from app.models.user_profile import UserProfile
 from app.schemas.prescription_item import (
     PrescriptionItemCreate,
     PrescriptionItemResponse,
@@ -15,15 +19,17 @@ from app.services.prescription_item_service import (
     update_prescription_item,
 )
 
-router = APIRouter(
-    prefix="/prescription-items",
-    tags=["Prescription Items"],
-)
+_READ_ROLES = require_roles("admin", "doctor", "pharmacist")
+_WRITE_ROLES = require_roles("admin", "doctor", "pharmacist")
+
+router = APIRouter(prefix="/prescription-items", tags=["Prescription Items"])
 
 
 @router.post("/", response_model=PrescriptionItemResponse, status_code=201)
 def create_prescription_item_endpoint(
-    data: PrescriptionItemCreate, db: Session = Depends(get_db)
+    data: PrescriptionItemCreate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
+    db: Session = Depends(get_db),
 ):
     return create_prescription_item(db, data)
 
@@ -33,6 +39,7 @@ def list_prescription_items(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     prescription_id: int | None = Query(default=None, gt=0),
+    _: Annotated[UserProfile, Depends(_READ_ROLES)] = None,
     db: Session = Depends(get_db),
 ):
     return get_prescription_items(db, skip, limit, prescription_id)
@@ -40,13 +47,13 @@ def list_prescription_items(
 
 @router.get("/{item_id}", response_model=PrescriptionItemResponse)
 def retrieve_prescription_item(
-    item_id: int, db: Session = Depends(get_db)
+    item_id: int,
+    _: Annotated[UserProfile, Depends(_READ_ROLES)] = None,
+    db: Session = Depends(get_db),
 ):
     item = get_prescription_item(db, item_id)
     if item is None:
-        raise HTTPException(
-            status_code=404, detail="Prescription item not found."
-        )
+        raise HTTPException(status_code=404, detail="Prescription item not found.")
     return item
 
 
@@ -54,24 +61,23 @@ def retrieve_prescription_item(
 def edit_prescription_item(
     item_id: int,
     data: PrescriptionItemUpdate,
+    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
     db: Session = Depends(get_db),
 ):
     item = get_prescription_item(db, item_id)
     if item is None:
-        raise HTTPException(
-            status_code=404, detail="Prescription item not found."
-        )
+        raise HTTPException(status_code=404, detail="Prescription item not found.")
     return update_prescription_item(db, item, data)
 
 
 @router.delete("/{item_id}", status_code=204)
 def remove_prescription_item(
-    item_id: int, db: Session = Depends(get_db)
+    item_id: int,
+    _: Annotated[UserProfile, Depends(require_roles("admin", "doctor"))],
+    db: Session = Depends(get_db),
 ):
     item = get_prescription_item(db, item_id)
     if item is None:
-        raise HTTPException(
-            status_code=404, detail="Prescription item not found."
-        )
+        raise HTTPException(status_code=404, detail="Prescription item not found.")
     delete_prescription_item(db, item)
     return Response(status_code=204)
