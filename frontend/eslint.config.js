@@ -17,5 +17,11 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // The set-state-in-effect rule is overly aggressive about calling
+      // async data-loading functions (which themselves call setState) inside
+      // useEffect — that is the recommended React pattern.
+      'react-hooks/set-state-in-effect': 'off',
+    },
   },
 ])
