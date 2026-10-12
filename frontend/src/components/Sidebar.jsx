@@ -55,6 +55,12 @@ const NAV_ITEMS = [
     allowedRoles: ['admin', 'receptionist', 'doctor', 'patient'],
   },
   {
+    to: '/patient/book-appointment',
+    icon: RiCalendarCheckLine,
+    label: 'Book Appointment',
+    allowedRoles: ['patient'],
+  },
+  {
     to: '/medical-records',
     icon: RiFileList3Line,
     label: 'Medical Records',

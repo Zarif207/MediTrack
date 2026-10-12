@@ -349,3 +349,54 @@ To make Firebase Authentication fully functional:
 - Dashboard stat cards fetch up to 100 records and display the count. For databases with more than 100 records, the totals shown are not exact database counts (no server-side `COUNT(*)` endpoint exists).
 - The `patient` role restriction is enforced at the API auth level (requiring a token) but per-patient row-level filtering (only seeing your own records) is not yet fully implemented at the service layer — all authenticated patient-role users can currently read any patient record by ID.
 - Firebase is required for all staff dashboard features. Without it, the dashboard renders in demo mode (no auth, all endpoints return 503 for protected writes).
+
+---
+
+## Patient Self-Booking
+
+Authenticated patients book appointments at `POST /appointments/book`:
+
+```
+POST /appointments/book
+Authorization: Bearer <firebase-id-token>
+
+{
+  "doctor_id": 1,
+  "appointment_date": "2026-12-01",
+  "appointment_time": "14:00",
+  "reason": "Annual checkup"
+}
+```
+
+- `patient_id` is **never accepted from the request** — derived from the server-side `UserProfile`
+- Requires a linked patient record (`patient_id` not null) — returns 403 with a clear message otherwise
+- Validates doctor existence, date/time format, and prevents double-booking conflicts
+- Staff use `POST /appointments/` (requires admin or receptionist role)
+
+## Patient Onboarding Flow
+
+1. Patient signs up → `role = patient`, `patient_id = null`
+2. Patient sees onboarding dashboard (not a 403) with booking and browsing options
+3. Staff creates a patient record at `/patients`  
+4. Admin links it: **Admin → User Roles** → click the **Unlinked** badge → select patient → **Save Link**  
+5. Patient refreshes → full health portal: appointments, medical records, prescriptions, bills  
+
+## Profile Name Sync (fixed)
+
+`get_current_user` now updates `display_name` and `email` from the Firebase token on every authenticated request. `POST /auth/register` also updates existing profiles if the name has changed. Previously, profiles created before a display name was set kept `null` permanently.
+
+## New API Endpoint
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/appointments/book` | Patient self-booking (patient role, linked only) |
+| `POST` | `/auth/me/refresh` | Force-refresh profile from Firebase token |
+
+## Tests
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m pytest tests/test_patient_ownership.py -v
+# Expected: 50 passed
+```

@@ -31,6 +31,7 @@ import Prescriptions      from './pages/Prescriptions'
 import PrescriptionItems  from './pages/PrescriptionItems'
 import Bills              from './pages/Bills'
 import AdminUsers         from './pages/AdminUsers'
+import PatientBooking     from './pages/PatientBooking'
 
 import NotFound from './pages/NotFound'
 
@@ -67,6 +68,9 @@ export default function App() {
           <Route path="/prescriptions"      element={<Prescriptions />} />
           <Route path="/prescription-items" element={<PrescriptionItems />} />
           <Route path="/bills"              element={<Bills />} />
+
+          {/* Patient self-booking — accessible to all authenticated users */}
+          <Route path="/patient/book-appointment" element={<PatientBooking />} />
 
           {/* Admin-only: user role management */}
           <Route

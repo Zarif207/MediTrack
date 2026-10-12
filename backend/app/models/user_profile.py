@@ -1,16 +1,22 @@
 """
 UserProfile — maps a Firebase UID to a role stored in PostgreSQL.
 
+Role hierarchy:
+  user          — default role for new registrations. Cannot access patient or
+                  staff endpoints. Admin must assign a specific role.
+  patient       — can book appointments and access own health data (when linked).
+  doctor        — clinical staff.
+  pharmacist    — pharmacy staff.
+  receptionist  — reception/scheduling staff.
+  accountant    — billing staff.
+  admin         — system administrator with full management access.
+
 Design notes:
-- We do NOT store passwords.  Firebase handles authentication.
+- We do NOT store passwords. Firebase handles authentication.
 - firebase_uid is the primary key (the string UID Firebase assigns).
 - role is application-level and authoritative; the client cannot self-promote.
-- patient_id is a nullable FK to patients.patient_id.
-  It is the ONLY trusted mapping between a Firebase account and a patient record.
-  Admins set it via PATCH /auth/users/{uid}/link-patient.
-  Patients cannot set it themselves.
-- display_name and email are cached from the Firebase token for display only;
-  they are never used as authorization signals.
+- patient_id is a nullable FK to patients.patient_id — set by admin only.
+- display_name and email are cached from the Firebase token for display only.
 """
 from datetime import datetime
 
@@ -21,13 +27,20 @@ from app.database.base import Base
 
 
 VALID_ROLES = frozenset({
+    "user",           # default — new registration, no clinical permissions
+    "patient",        # can book appointments, view own health data when linked
     "admin",
     "receptionist",
     "doctor",
     "pharmacist",
     "accountant",
-    "patient",
 })
+
+# Roles that have patient-level access to health endpoints
+PATIENT_ROLES = frozenset({"patient"})
+
+# Roles considered "staff" (can access most management endpoints)
+STAFF_ROLES = frozenset({"admin", "receptionist", "doctor", "pharmacist", "accountant"})
 
 
 class UserProfile(Base):
@@ -42,13 +55,13 @@ class UserProfile(Base):
     role: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
-        default="patient",
-        comment="Application role: admin|receptionist|doctor|pharmacist|accountant|patient",
+        default="user",
+        comment=(
+            "Application role: user|patient|admin|receptionist|"
+            "doctor|pharmacist|accountant"
+        ),
     )
 
-    # Trusted server-side mapping: Firebase UID → patients.patient_id
-    # Nullable — not every Firebase account corresponds to a patients row.
-    # ON DELETE SET NULL: deleting a patient does not delete their Firebase account.
     patient_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("patients.patient_id", ondelete="SET NULL"),
@@ -75,7 +88,6 @@ class UserProfile(Base):
         default=datetime.now,
     )
 
-    # Relationship back to Patient (optional — not eager-loaded)
     patient: Mapped["Patient | None"] = relationship(
         "Patient",
         foreign_keys=[patient_id],

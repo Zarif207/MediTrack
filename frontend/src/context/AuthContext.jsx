@@ -110,6 +110,23 @@ export function AuthProvider({ children }) {
     }
   }, [user])
 
+  /** Force-refresh the profile from the backend (call after admin links patient) */
+  const refreshProfile = useCallback(async () => {
+    if (!user) return
+    try {
+      const token = await user.getIdToken(true) // force refresh Firebase token too
+      const res = await fetch(`${BASE}/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const p = await res.json()
+        setProfile(p)
+      }
+    } catch {
+      // Backend unreachable — ignore
+    }
+  }, [user])
+
   const signIn = useCallback(async (email, password) => {
     if (!auth) throw new Error('Firebase is not configured. Add VITE_FIREBASE_* variables to frontend/.env')
     await signInWithEmailAndPassword(auth, email, password)
@@ -145,6 +162,7 @@ export function AuthProvider({ children }) {
     signOut: signOutFn,
     sendPasswordReset,
     getIdToken,
+    refreshProfile,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -81,6 +81,7 @@ export const healthApi = {
 export const authApi = {
   register: (body) => post('/auth/register', body),
   me:       ()     => get('/auth/me'),
+  refreshMe: ()    => post('/auth/me/refresh', {}),
   listUsers: ()    => get('/auth/users'),
   setRole:  (uid, role) => patch(`/auth/users/${uid}/role`, { role }),
   linkPatient: (uid, patientId) => patch(`/auth/users/${uid}/link-patient`, { patient_id: patientId }),

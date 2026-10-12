@@ -42,3 +42,4 @@ class AppointmentResponse(BaseModel):
     status: AppointmentStatus
     reason: str | None
     created_at: datetime
+    firebase_uid: str | None = None   # present for unlinked-patient bookings

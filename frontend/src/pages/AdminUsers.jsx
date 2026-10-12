@@ -11,15 +11,16 @@ import Button from '../components/ui/Button'
 import Modal from '../components/ui/Modal'
 import { RiUserSettingsLine, RiCheckLine, RiLinkM, RiLinkUnlinkM } from 'react-icons/ri'
 
-const ROLES = ['admin', 'receptionist', 'doctor', 'pharmacist', 'accountant', 'patient']
+const ROLES = ['user', 'patient', 'doctor', 'pharmacist', 'receptionist', 'accountant', 'admin']
 
 const ROLE_COLORS = {
+  user:         'bg-gray-100 text-gray-600 border-gray-200',
   admin:        'bg-red-100 text-red-700 border-red-200',
   receptionist: 'bg-blue-100 text-blue-700 border-blue-200',
   doctor:       'bg-teal-100 text-teal-700 border-teal-200',
   pharmacist:   'bg-green-100 text-green-700 border-green-200',
   accountant:   'bg-amber-100 text-amber-700 border-amber-200',
-  patient:      'bg-gray-100 text-gray-600 border-gray-200',
+  patient:      'bg-indigo-100 text-indigo-700 border-indigo-200',
 }
 
 export default function AdminUsers() {
@@ -63,7 +64,7 @@ export default function AdminUsers() {
   function openLinkModal(u) {
     setLinkError(null)
     setLinkPatientId(u.patient_id ? String(u.patient_id) : '')
-    setLinkModal({ uid: u.firebase_uid, displayName: u.display_name ?? u.email ?? u.firebase_uid, currentPatientId: u.patient_id })
+    setLinkModal({ uid: u.firebase_uid, displayName: u.display_name || u.email?.split('@')[0] || u.firebase_uid.slice(0,12), currentPatientId: u.patient_id })
   }
 
   async function applyLink() {
@@ -120,7 +121,9 @@ export default function AdminUsers() {
                   return (
                     <tr key={u.firebase_uid} className="hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-3">
-                        <p className="font-medium text-gray-800">{u.display_name ?? '(no name)'}</p>
+                        <p className="font-medium text-gray-800">
+                          {u.display_name || u.email?.split('@')[0] || '(no name)'}
+                        </p>
                         <p className="text-xs text-gray-400">{u.email ?? '—'}</p>
                       </td>
                       <td className="px-5 py-3 font-mono text-xs text-gray-400 max-w-[110px] truncate" title={u.firebase_uid}>
@@ -162,7 +165,7 @@ export default function AdminUsers() {
                           disabled={!changed}
                           loading={saving === u.firebase_uid}
                           icon={!changed ? <RiCheckLine size={13} /> : null}
-                          onClick={() => setConfirm({ uid: u.firebase_uid, role: selectedRole, displayName: u.display_name ?? u.email ?? u.firebase_uid })}
+                          onClick={() => setConfirm({ uid: u.firebase_uid, role: selectedRole, displayName: u.display_name || u.email?.split('@')[0] || u.firebase_uid.slice(0,12) })}
                         >
                           {changed ? 'Apply' : 'Saved'}
                         </Button>
