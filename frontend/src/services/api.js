@@ -83,6 +83,7 @@ export const authApi = {
   me:       ()     => get('/auth/me'),
   listUsers: ()    => get('/auth/users'),
   setRole:  (uid, role) => patch(`/auth/users/${uid}/role`, { role }),
+  linkPatient: (uid, patientId) => patch(`/auth/users/${uid}/link-patient`, { patient_id: patientId }),
 }
 
 /* ── Patients ── */

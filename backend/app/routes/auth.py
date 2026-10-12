@@ -1,15 +1,17 @@
 """
 Auth / user-profile routes.
 
-Public routes (no auth required):
-    POST /auth/register  — after Firebase sign-up, creates a UserProfile row.
-                           Role is always "patient"; admins promote via PATCH.
+Public:
+    POST /auth/register  — creates a UserProfile (role=patient) on first sign-in.
 
-Protected routes:
-    GET  /auth/me        — returns the current user's profile.
-    PATCH /auth/me       — update display_name only (not role).
-    GET  /auth/users     — admin: list all profiles.
-    PATCH /auth/users/{uid}/role  — admin: change a user's role.
+Authenticated (any role):
+    GET  /auth/me                   — current user's profile.
+    PATCH /auth/me                  — update own display_name only.
+
+Admin only:
+    GET  /auth/users                — list all profiles.
+    PATCH /auth/users/{uid}/role    — set a user's role.
+    PATCH /auth/users/{uid}/link-patient — link a Firebase account to a patient row.
 """
 from typing import Annotated
 
@@ -19,25 +21,25 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user, require_roles
 from app.database.dependencies import get_db
+from app.models.patient import Patient
 from app.models.user_profile import UserProfile, VALID_ROLES
-from app.auth.firebase import initialize_firebase
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
-# ── Schemas ──────────────────────────────────────────────────────────────────
+# ── Schemas ───────────────────────────────────────────────────────────────────
 
 class UserProfileResponse(BaseModel):
     firebase_uid: str
     role: str
     display_name: str | None
     email: str | None
+    patient_id: int | None  # None for staff accounts
 
     model_config = {"from_attributes": True}
 
 
 class RegisterRequest(BaseModel):
-    """Sent by the frontend right after Firebase sign-up / sign-in."""
     firebase_uid: str = Field(min_length=1, max_length=128)
     display_name: str | None = Field(default=None, max_length=200)
     email: str | None = Field(default=None, max_length=200)
@@ -47,11 +49,23 @@ class RoleUpdateRequest(BaseModel):
     role: str = Field(min_length=1, max_length=20)
 
 
+class LinkPatientRequest(BaseModel):
+    """Admin-only: link a Firebase account to a patient record."""
+    patient_id: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "The patients.patient_id to link. "
+            "Send null to unlink the account from a patient record."
+        ),
+    )
+
+
 class DisplayNameUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, max_length=200)
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post(
     "/register",
@@ -64,9 +78,9 @@ def register(
     db: Session = Depends(get_db),
 ):
     """
-    Called by the frontend after a successful Firebase sign-in.
+    Called by the frontend after Firebase sign-in.
     Safe to call multiple times — returns existing profile if uid exists.
-    Default role: 'patient'.  Admins promote via PATCH /auth/users/{uid}/role.
+    Default role: 'patient'. Admins promote and link patient records separately.
     """
     existing = db.get(UserProfile, body.firebase_uid)
     if existing:
@@ -87,7 +101,7 @@ def register(
 @router.get(
     "/me",
     response_model=UserProfileResponse,
-    summary="Return the authenticated user's own profile",
+    summary="Return the authenticated user's own profile (includes patient_id if linked)",
 )
 def get_me(
     current_user: Annotated[UserProfile, Depends(get_current_user)],
@@ -142,12 +156,58 @@ def set_user_role(
 
     profile = db.get(UserProfile, uid)
     if profile is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User profile not found.",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found.")
 
     profile.role = body.role
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@router.patch(
+    "/users/{uid}/link-patient",
+    response_model=UserProfileResponse,
+    summary="Admin: link (or unlink) a Firebase account to a patient record",
+)
+def link_patient(
+    uid: str,
+    body: LinkPatientRequest,
+    _: Annotated[UserProfile, Depends(require_roles("admin"))],
+    db: Session = Depends(get_db),
+):
+    """
+    Associates a UserProfile with a patients row via the trusted patient_id column.
+    Only admins can call this — users cannot link themselves.
+
+    Pass patient_id: null to unlink.
+    """
+    profile = db.get(UserProfile, uid)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found.")
+
+    if body.patient_id is not None:
+        patient = db.get(Patient, body.patient_id)
+        if patient is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Patient #{body.patient_id} not found.",
+            )
+        # Guard: prevent a patient_id from being linked to two different accounts
+        existing = (
+            db.query(UserProfile)
+            .filter(
+                UserProfile.patient_id == body.patient_id,
+                UserProfile.firebase_uid != uid,
+            )
+            .first()
+        )
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Patient #{body.patient_id} is already linked to another account.",
+            )
+
+    profile.patient_id = body.patient_id
     db.commit()
     db.refresh(profile)
     return profile

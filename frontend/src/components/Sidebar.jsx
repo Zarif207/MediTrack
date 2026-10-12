@@ -18,17 +18,72 @@ import {
 } from 'react-icons/ri'
 import { useAuth } from '../context/useAuth'
 
+/**
+ * Role-based sidebar visibility.
+ * allowedRoles: undefined means visible to ALL authenticated users.
+ * An empty allowedRoles array hides the item from everyone.
+ */
 const NAV_ITEMS = [
-  { to: '/dashboard',          icon: RiDashboardLine,       label: 'Dashboard' },
-  { to: '/patients',           icon: RiUserHeartLine,       label: 'Patients' },
-  { to: '/doctors',            icon: RiUserStarLine,        label: 'Doctors' },
-  { to: '/departments',        icon: RiBuildingLine,        label: 'Departments' },
-  { to: '/appointments',       icon: RiCalendarCheckLine,   label: 'Appointments' },
-  { to: '/medical-records',    icon: RiFileList3Line,       label: 'Medical Records' },
-  { to: '/prescriptions',      icon: RiCapsuleLine,         label: 'Prescriptions' },
-  { to: '/medicines',          icon: RiMedicineBottleLine,  label: 'Medicines' },
-  { to: '/prescription-items', icon: RiListCheck3,          label: 'Rx Items' },
-  { to: '/bills',              icon: RiMoneyDollarCircleLine, label: 'Bills' },
+  {
+    to: '/dashboard',
+    icon: RiDashboardLine,
+    label: 'Dashboard',
+    // Dashboard is visible to all — but content is role-scoped inside the page
+  },
+  {
+    to: '/patients',
+    icon: RiUserHeartLine,
+    label: 'Patients',
+    allowedRoles: ['admin', 'receptionist', 'doctor', 'patient'],
+  },
+  {
+    to: '/doctors',
+    icon: RiUserStarLine,
+    label: 'Doctors',
+    allowedRoles: ['admin', 'receptionist', 'doctor', 'pharmacist', 'accountant'],
+  },
+  {
+    to: '/departments',
+    icon: RiBuildingLine,
+    label: 'Departments',
+    allowedRoles: ['admin', 'receptionist', 'doctor', 'pharmacist', 'accountant'],
+  },
+  {
+    to: '/appointments',
+    icon: RiCalendarCheckLine,
+    label: 'Appointments',
+    allowedRoles: ['admin', 'receptionist', 'doctor', 'patient'],
+  },
+  {
+    to: '/medical-records',
+    icon: RiFileList3Line,
+    label: 'Medical Records',
+    allowedRoles: ['admin', 'doctor', 'receptionist', 'patient'],
+  },
+  {
+    to: '/prescriptions',
+    icon: RiCapsuleLine,
+    label: 'Prescriptions',
+    allowedRoles: ['admin', 'doctor', 'pharmacist', 'patient'],
+  },
+  {
+    to: '/medicines',
+    icon: RiMedicineBottleLine,
+    label: 'Medicines',
+    allowedRoles: ['admin', 'doctor', 'pharmacist'],
+  },
+  {
+    to: '/prescription-items',
+    icon: RiListCheck3,
+    label: 'Rx Items',
+    allowedRoles: ['admin', 'doctor', 'pharmacist', 'patient'],
+  },
+  {
+    to: '/bills',
+    icon: RiMoneyDollarCircleLine,
+    label: 'Bills',
+    allowedRoles: ['admin', 'receptionist', 'accountant', 'patient'],
+  },
 ]
 
 function NavItem({ to, icon: Icon, label, collapsed, onClick }) {
@@ -51,7 +106,15 @@ function NavItem({ to, icon: Icon, label, collapsed, onClick }) {
 
 export default function Sidebar({ collapsed, mobileOpen, onMobileClose }) {
   const { profile } = useAuth()
-  const isAdmin = profile?.role === 'admin'
+  const role = profile?.role ?? null
+  const isAdmin = role === 'admin'
+
+  // Filter nav items to those the current role is allowed to see
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    if (!item.allowedRoles) return true          // no restriction
+    if (!role) return false                      // not authenticated
+    return item.allowedRoles.includes(role)
+  })
 
   return (
     <>
@@ -89,7 +152,6 @@ export default function Sidebar({ collapsed, mobileOpen, onMobileClose }) {
               <p className="text-navy-300 text-xs mt-0.5">Hospital Management</p>
             </div>
           )}
-          {/* Mobile close */}
           <button
             className="ml-auto text-navy-300 hover:text-white lg:hidden"
             onClick={onMobileClose}
@@ -101,7 +163,7 @@ export default function Sidebar({ collapsed, mobileOpen, onMobileClose }) {
 
         {/* Nav links */}
         <nav className="flex-1 overflow-y-auto sidebar-scroll py-3 px-2 flex flex-col gap-0.5">
-          {NAV_ITEMS.map((item) => (
+          {visibleItems.map((item) => (
             <NavItem
               key={item.to}
               {...item}
@@ -129,7 +191,7 @@ export default function Sidebar({ collapsed, mobileOpen, onMobileClose }) {
           )}
         </nav>
 
-        {/* Footer link — back to public home */}
+        {/* Footer — back to public home */}
         <div className="px-2 py-3 border-t border-white/10">
           <Link
             to="/"

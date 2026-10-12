@@ -10,8 +10,11 @@ import {
   RiArrowRightLine,
   RiBuildingLine,
   RiMedicineBottleLine,
+  RiFileList3Line,
+  RiCapsuleLine,
 } from 'react-icons/ri'
-import { patientsApi, doctorsApi, appointmentsApi, billsApi } from '../services/api'
+import { patientsApi, doctorsApi, appointmentsApi, billsApi, medicalRecordsApi } from '../services/api'
+import { useAuth } from '../context/useAuth'
 import StatusBadge from '../components/ui/StatusBadge'
 import { PageLoader } from '../components/ui/Spinner'
 import { ConnectionError } from '../components/ui/ErrorAlert'
@@ -64,6 +67,117 @@ const stagger = {
 }
 
 export default function Dashboard() {
+  const { profile } = useAuth()
+  const isPatient = profile?.role === 'patient'
+
+  // Patient-role: show their own health summary
+  if (isPatient) return <PatientDashboard profile={profile} />
+  // Staff roles: show hospital overview
+  return <StaffDashboard />
+}
+
+function PatientDashboard({ profile }) {
+  const [appts, setAppts]       = useState([])
+  const [bills, setBills]       = useState([])
+  const [records, setRecords]   = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState(null)
+
+  useEffect(() => {
+    async function load() {
+      try {
+        setLoading(true)
+        // All three calls are scoped to the patient's own data server-side
+        const [a, b, r] = await Promise.all([
+          appointmentsApi.list({ limit: 5 }),
+          billsApi.list({ limit: 5 }),
+          medicalRecordsApi.list({ limit: 5 }),
+        ])
+        setAppts(a); setBills(b); setRecords(r)
+      } catch (e) { setError(e.message) }
+      finally { setLoading(false) }
+    }
+    load()
+  }, [])
+
+  if (loading) return <PageLoader />
+  if (error?.includes('fetch')) return <ConnectionError />
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-gray-900">
+          Welcome, {profile?.display_name ?? 'Patient'}
+        </h2>
+        <p className="text-gray-500 mt-1 text-sm">Your personal health overview.</p>
+      </div>
+
+      {/* Patient stat cards */}
+      <motion.div
+        variants={stagger.container}
+        initial="initial"
+        animate="animate"
+        className="grid grid-cols-2 lg:grid-cols-3 gap-4"
+      >
+        {[
+          { icon: RiCalendarCheckLine, label: 'My Appointments', value: appts.length, color: 'bg-indigo-500', to: '/appointments' },
+          { icon: RiMoneyDollarCircleLine, label: 'My Bills', value: bills.length, color: 'bg-amber-500', to: '/bills' },
+          { icon: RiFileList3Line, label: 'My Records', value: records.length, color: 'bg-teal-500', to: '/medical-records' },
+        ].map((card) => (
+          <motion.div key={card.label} variants={stagger.item}>
+            <StatCard {...card} loading={loading} />
+          </motion.div>
+        ))}
+      </motion.div>
+
+      {/* Recent appointments */}
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800">Recent Appointments</h3>
+          <Link to="/appointments" className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1">
+            View all <RiArrowRightLine size={13} />
+          </Link>
+        </div>
+        {appts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-10 text-gray-400">
+            <RiCalendarCheckLine size={28} className="mb-2" />
+            <p className="text-sm">No appointments yet</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {appts.map((a) => (
+                  <tr key={a.appointment_id} className="hover:bg-gray-50">
+                    <td className="px-5 py-3 text-gray-700">{formatDate(a.appointment_date)}</td>
+                    <td className="px-5 py-3"><StatusBadge value={a.status} /></td>
+                    <td className="px-5 py-3 text-gray-500 max-w-[200px] truncate">{a.reason ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Quick links for patient */}
+      <div className="grid sm:grid-cols-3 gap-3">
+        <QuickAction icon={RiCalendarCheckLine} label="My Appointments" to="/appointments" color="bg-indigo-500" />
+        <QuickAction icon={RiCapsuleLine} label="My Prescriptions" to="/prescriptions" color="bg-purple-500" />
+        <QuickAction icon={RiMoneyDollarCircleLine} label="My Bills" to="/bills" color="bg-amber-500" />
+      </div>
+    </div>
+  )
+}
+
+function StaffDashboard() {
   const [stats, setStats] = useState({ patients: null, doctors: null, appointments: null, pending: null })
   const [recentAppts, setRecentAppts] = useState([])
   const [loading, setLoading] = useState(true)

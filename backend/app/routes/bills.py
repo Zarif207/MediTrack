@@ -1,10 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import require_roles
+from app.auth.dependencies import get_patient_id_for_user, require_roles
 from app.database.dependencies import get_db
+from app.models.bill import Bill
 from app.models.user_profile import UserProfile
 from app.schemas.bill import BillCreate, BillResponse, BillUpdate
 from app.services.bill_service import (
@@ -15,8 +16,8 @@ from app.services.bill_service import (
     update_bill,
 )
 
-_READ_ROLES = require_roles("admin", "receptionist", "accountant", "patient")
 _WRITE_ROLES = require_roles("admin", "receptionist", "accountant")
+_ANY_ALLOWED = require_roles("admin", "receptionist", "accountant", "patient")
 
 router = APIRouter(prefix="/bills", tags=["Bills"])
 
@@ -40,9 +41,21 @@ def list_bills_endpoint(
         default=None,
         pattern="^(pending|paid|cancelled)$",
     ),
-    _: Annotated[UserProfile, Depends(_READ_ROLES)] = None,
+    _: Annotated[UserProfile, Depends(_ANY_ALLOWED)] = None,
+    scoped_patient_id: int | None = Depends(get_patient_id_for_user),
     db: Session = Depends(get_db),
 ) -> list[BillResponse]:
+    if scoped_patient_id is not None:
+        # Patient: always filter to own bills; ignore patient_id query param
+        return get_bills(
+            db,
+            skip=skip,
+            limit=limit,
+            patient_id=scoped_patient_id,
+            appointment_id=appointment_id,
+            payment_status=payment_status,
+        )
+
     return get_bills(
         db,
         skip=skip,
@@ -56,10 +69,19 @@ def list_bills_endpoint(
 @router.get("/{bill_id}", response_model=BillResponse)
 def get_bill_endpoint(
     bill_id: int,
-    _: Annotated[UserProfile, Depends(_READ_ROLES)] = None,
+    _: Annotated[UserProfile, Depends(_ANY_ALLOWED)] = None,
+    scoped_patient_id: int | None = Depends(get_patient_id_for_user),
     db: Session = Depends(get_db),
 ) -> BillResponse:
-    return get_bill(db, bill_id)
+    bill = get_bill(db, bill_id)
+
+    if scoped_patient_id is not None and bill.patient_id != scoped_patient_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access your own bills.",
+        )
+
+    return bill
 
 
 @router.patch("/{bill_id}", response_model=BillResponse)
