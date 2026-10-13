@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_patient_id_for_user, require_roles
+from app.auth.dependencies import get_current_user, get_patient_id_for_user, require_roles
 from app.database.dependencies import get_db
 from app.models.appointment import Appointment
 from app.models.medical_record import MedicalRecord
@@ -61,13 +61,13 @@ def list_medical_records(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     appointment_id: int | None = Query(default=None, gt=0),
-    _: Annotated[UserProfile, Depends(_ANY_ALLOWED)] = None,
+    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
     scoped_patient_id: int | None = Depends(get_patient_id_for_user),
     db: Session = Depends(get_db),
 ):
-    if scoped_patient_id is not None:
-        # Patient: join through appointments to filter by patient_id
-        # Never trust appointment_id from the query string for patient-role
+    if current_user.role == "patient":
+        if scoped_patient_id is None:
+            return []  # no patient record yet — empty list
         stmt = (
             select(MedicalRecord)
             .join(Appointment, MedicalRecord.appointment_id == Appointment.appointment_id)
@@ -85,7 +85,7 @@ def list_medical_records(
 @router.get("/{record_id}", response_model=MedicalRecordResponse)
 def retrieve_medical_record(
     record_id: int,
-    _: Annotated[UserProfile, Depends(_ANY_ALLOWED)] = None,
+    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
     scoped_patient_id: int | None = Depends(get_patient_id_for_user),
     db: Session = Depends(get_db),
 ):
@@ -93,7 +93,9 @@ def retrieve_medical_record(
     if record is None:
         raise HTTPException(status_code=404, detail="Medical record not found.")
 
-    if scoped_patient_id is not None:
+    if current_user.role == "patient":
+        if scoped_patient_id is None:
+            raise HTTPException(status_code=404, detail="Medical record not found.")
         _assert_patient_owns_record(record, scoped_patient_id, db)
 
     return record

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_patient_id_for_user, require_roles
+from app.auth.dependencies import get_current_user, get_patient_id_for_user, require_roles
 from app.database.dependencies import get_db
 from app.models.appointment import Appointment
 from app.models.medical_record import MedicalRecord
@@ -60,12 +60,13 @@ def list_prescriptions(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     record_id: int | None = Query(default=None, gt=0),
-    _: Annotated[UserProfile, Depends(_ANY_ALLOWED)] = None,
+    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
     scoped_patient_id: int | None = Depends(get_patient_id_for_user),
     db: Session = Depends(get_db),
 ):
-    if scoped_patient_id is not None:
-        # Walk: prescriptions → medical_records → appointments (patient_id)
+    if current_user.role == "patient":
+        if scoped_patient_id is None:
+            return []  # no patient record yet
         stmt = (
             select(Prescription)
             .join(MedicalRecord, Prescription.record_id == MedicalRecord.record_id)
@@ -83,7 +84,7 @@ def list_prescriptions(
 @router.get("/{prescription_id}", response_model=PrescriptionResponse)
 def retrieve_prescription(
     prescription_id: int,
-    _: Annotated[UserProfile, Depends(_ANY_ALLOWED)] = None,
+    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
     scoped_patient_id: int | None = Depends(get_patient_id_for_user),
     db: Session = Depends(get_db),
 ):
@@ -91,7 +92,9 @@ def retrieve_prescription(
     if prescription is None:
         raise HTTPException(status_code=404, detail="Prescription not found.")
 
-    if scoped_patient_id is not None:
+    if current_user.role == "patient":
+        if scoped_patient_id is None:
+            raise HTTPException(status_code=404, detail="Prescription not found.")
         _assert_patient_owns_prescription(prescription, scoped_patient_id, db)
 
     return prescription

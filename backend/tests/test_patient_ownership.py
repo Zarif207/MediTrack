@@ -214,13 +214,8 @@ def make_client(profile: UserProfile) -> TestClient:
 
     async def fake_patient_id():
         if profile.role == "patient":
-            if profile.patient_id is None:
-                from fastapi import HTTPException, status
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Your account is not yet linked to a patient record.",
-                )
-            return profile.patient_id
+            # New behavior: return None for unlinked patients (routes handle gracefully)
+            return profile.patient_id  # None when unlinked — not 403
         return None
 
     async def fake_optional_patient_id():
@@ -277,39 +272,47 @@ class TestUnlinkedPatient:
     """Unlinked patient-role: health-data endpoints return 403 with a clear message."""
 
     def test_list_patients_unlinked(self, test_data):
+        """Unlinked patient gets an empty list (not 403) — no patient record yet."""
         r = make_client(test_data["profile_unlinked"]).get("/patients/")
         reset()
-        assert r.status_code == 403
-        assert "linked" in r.json()["detail"].lower()
+        # New behavior: returns 200 with empty list instead of 403
+        assert r.status_code == 200
+        assert r.json() == []
 
     def test_list_appointments_unlinked(self, test_data):
-        """Unlinked patient gets 200 with empty list (not 403) since they can view own bookings."""
+        """Unlinked patient gets 200 with empty list — scoped by firebase_uid."""
         r = make_client(test_data["profile_unlinked"]).get("/appointments/")
         reset()
-        # New behavior: unlinked patient gets empty list (no appointments yet)
-        # rather than 403, because the route filters by firebase_uid
         assert r.status_code == 200
         assert r.json() == []
 
     def test_list_bills_unlinked(self, test_data):
+        """Unlinked patient gets 200 with empty list — no patient record yet."""
         r = make_client(test_data["profile_unlinked"]).get("/bills/")
         reset()
-        assert r.status_code == 403
+        assert r.status_code == 200
+        assert r.json() == []
 
     def test_list_medical_records_unlinked(self, test_data):
+        """Unlinked patient gets 200 with empty list — no patient record yet."""
         r = make_client(test_data["profile_unlinked"]).get("/medical-records/")
         reset()
-        assert r.status_code == 403
+        assert r.status_code == 200
+        assert r.json() == []
 
     def test_list_prescriptions_unlinked(self, test_data):
+        """Unlinked patient gets 200 with empty list — no patient record yet."""
         r = make_client(test_data["profile_unlinked"]).get("/prescriptions/")
         reset()
-        assert r.status_code == 403
+        assert r.status_code == 200
+        assert r.json() == []
 
     def test_list_prescription_items_unlinked(self, test_data):
+        """Unlinked patient gets 200 with empty list — no patient record yet."""
         r = make_client(test_data["profile_unlinked"]).get("/prescription-items/")
         reset()
-        assert r.status_code == 403
+        assert r.status_code == 200
+        assert r.json() == []
 
     def test_book_appointment_unlinked_patient_auto_creates_record(self, test_data, db):
         """Unlinked patient can now book — a minimal patient record is auto-created."""

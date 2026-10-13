@@ -167,37 +167,30 @@ async def get_patient_id_for_user(
     """
     Return the trusted patient_id for the current user.
 
-    - Linked patient-role users  → patient_id from UserProfile.
-    - Unlinked patient-role users → raises 403 (health-data endpoints).
-    - Staff roles                 → returns None (no ownership filter).
-    - user role                   → raises 403 (no patient access).
+    - patient-role with linked patient_id → returns patient_id
+    - patient-role with NO patient_id     → returns None (not 403)
+      The caller decides whether to return empty data or create a patient record.
+    - staff roles (admin/doctor/etc.)     → returns None (no ownership filter)
+    - user role                           → raises 403 (no patient access at all)
     """
     if user.role == "patient":
-        if user.patient_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Your account is not yet linked to a patient record. "
-                    "Contact an administrator to link your account."
-                ),
-            )
-        return user.patient_id
+        return user.patient_id  # may be None — callers handle this as "no records yet"
     if user.role == "user":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account has not been assigned a role. Contact an administrator.",
         )
-    return None   # staff roles
+    return None   # staff roles — no filter, see everything
 
 
 async def get_optional_patient_id(
     user: Annotated[UserProfile, Depends(get_current_user)],
 ) -> int | None:
     """
-    Like get_patient_id_for_user but does NOT raise 403 for unlinked patients.
-    Returns None for staff, unlinked patients, and user-role accounts.
-    Use on endpoints that handle the unlinked state gracefully.
+    Like get_patient_id_for_user. Returns None for staff, all patients
+    (linked or unlinked), and user-role accounts that aren't blocked above.
+    Use on endpoints that gracefully handle the no-record state.
     """
-    if user.role in ("patient",):
-        return user.patient_id   # may be None
-    return None
+    if user.role == "patient":
+        return user.patient_id  # may be None
+    return None  # staff roles — no filter

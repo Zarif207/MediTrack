@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_patient_id_for_user, require_roles
+from app.auth.dependencies import get_current_user, get_patient_id_for_user, require_roles
 from app.database.dependencies import get_db
 from app.models.appointment import Appointment
 from app.models.medical_record import MedicalRecord
@@ -65,12 +65,13 @@ def list_prescription_items(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     prescription_id: int | None = Query(default=None, gt=0),
-    _: Annotated[UserProfile, Depends(_ANY_ALLOWED)] = None,
+    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
     scoped_patient_id: int | None = Depends(get_patient_id_for_user),
     db: Session = Depends(get_db),
 ):
-    if scoped_patient_id is not None:
-        # Full chain: items → prescriptions → medical_records → appointments
+    if current_user.role == "patient":
+        if scoped_patient_id is None:
+            return []  # no patient record yet
         stmt = (
             select(PrescriptionItem)
             .join(Prescription, PrescriptionItem.prescription_id == Prescription.prescription_id)
@@ -89,7 +90,7 @@ def list_prescription_items(
 @router.get("/{item_id}", response_model=PrescriptionItemResponse)
 def retrieve_prescription_item(
     item_id: int,
-    _: Annotated[UserProfile, Depends(_ANY_ALLOWED)] = None,
+    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
     scoped_patient_id: int | None = Depends(get_patient_id_for_user),
     db: Session = Depends(get_db),
 ):
@@ -97,7 +98,9 @@ def retrieve_prescription_item(
     if item is None:
         raise HTTPException(status_code=404, detail="Prescription item not found.")
 
-    if scoped_patient_id is not None:
+    if current_user.role == "patient":
+        if scoped_patient_id is None:
+            raise HTTPException(status_code=404, detail="Prescription item not found.")
         _assert_patient_owns_item(item, scoped_patient_id, db)
 
     return item

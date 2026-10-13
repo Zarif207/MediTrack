@@ -40,10 +40,7 @@ def list_patients(
     # patient-role: list returns only their own record
     if current_user.role == "patient":
         if current_user.patient_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your account is not yet linked to a patient record.",
-            )
+            return []  # no patient record yet — empty list, not 403
         record = get_patient(db, current_user.patient_id)
         return [record] if record else []
 
@@ -63,10 +60,7 @@ def retrieve_patient(
     # patient-role: only their own record
     if current_user.role == "patient":
         if current_user.patient_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Your account is not yet linked to a patient record.",
-            )
+            raise HTTPException(status_code=404, detail="Patient record not found.")
         if patient_id != current_user.patient_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

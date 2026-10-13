@@ -1,15 +1,12 @@
 /**
  * Patient self-booking page — /patient/book-appointment
  *
- * For authenticated patients. Uses POST /appointments/book which derives
- * patient_id from the server-side UserProfile. Never sends a patient_id
- * from the browser.
- *
- * Unlinked patients see a clear message before the form.
+ * Any user with the 'patient' role can book immediately.
+ * No patient_id / admin linking required.
+ * The backend auto-creates a minimal patient record on first booking.
  */
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router'
-import { motion } from 'framer-motion'
 import { useAuth } from '../context/useAuth'
 import { doctorsApi, departmentsApi } from '../services/api'
 import Input from '../components/ui/Input'
@@ -17,7 +14,7 @@ import Button from '../components/ui/Button'
 import ErrorAlert from '../components/ui/ErrorAlert'
 import {
   RiCalendarCheckLine, RiUserStarLine, RiBuildingLine,
-  RiArrowLeftLine, RiCheckLine, RiTimeLine,
+  RiArrowLeftLine, RiCheckLine,
 } from 'react-icons/ri'
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'
@@ -42,13 +39,12 @@ async function bookAppointment(token, body) {
 }
 
 export default function PatientBooking() {
-  const { profile, getIdToken } = useAuth()
-  // navigate available for future redirect features
+  const { getIdToken } = useAuth()
 
-  const [doctors, setDoctors]     = useState([])
-  const [depts, setDepts]         = useState([])
+  const [doctors, setDoctors]         = useState([])
+  const [depts, setDepts]             = useState([])
   const [loadingData, setLoadingData] = useState(true)
-  const [dataError, setDataError] = useState(null)
+  const [dataError, setDataError]     = useState(null)
 
   const [selectedDept, setSelectedDept] = useState('')
   const [doctorId, setDoctorId]         = useState('')
@@ -60,8 +56,6 @@ export default function PatientBooking() {
   const [submitError, setSubmitError]   = useState(null)
   const [success, setSuccess]           = useState(null)
 
-  const isLinked = profile?.patient_id != null
-
   useEffect(() => {
     async function load() {
       try {
@@ -69,9 +63,13 @@ export default function PatientBooking() {
           doctorsApi.list({ limit: 100 }),
           departmentsApi.list({ limit: 100 }),
         ])
-        setDoctors(drs); setDepts(ds)
-      } catch (e) { setDataError(e.message) }
-      finally { setLoadingData(false) }
+        setDoctors(drs)
+        setDepts(ds)
+      } catch (e) {
+        setDataError(e.message)
+      } finally {
+        setLoadingData(false)
+      }
     }
     load()
   }, [])
@@ -84,20 +82,21 @@ export default function PatientBooking() {
   function validate() {
     const e = {}
     if (!doctorId) e.doctorId = 'Please select a doctor'
-    if (!date) e.date = 'Please select a date'
-    else {
-      const d = new Date(date)
-      if (d < new Date(new Date().toDateString())) e.date = 'Date cannot be in the past'
+    if (!date) {
+      e.date = 'Please select a date'
+    } else if (new Date(date) < new Date(new Date().toDateString())) {
+      e.date = 'Date cannot be in the past'
     }
     if (!time) e.time = 'Please select a time'
     setErrors(e)
-    return !Object.keys(e).length
+    return Object.keys(e).length === 0
   }
 
   async function handleSubmit(ev) {
     ev.preventDefault()
     if (!validate()) return
-    setSubmitError(null); setSaving(true)
+    setSubmitError(null)
+    setSaving(true)
     try {
       const token = await getIdToken()
       if (!token) throw new Error('Not authenticated. Please sign in again.')
@@ -122,7 +121,7 @@ export default function PatientBooking() {
           <RiCheckLine size={36} className="text-green-600" />
         </div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Appointment Booked!</h2>
-        <p className="text-gray-500 mb-1">Your appointment has been confirmed.</p>
+        <p className="text-gray-500 mb-1">Your appointment has been scheduled.</p>
         <p className="text-sm text-gray-400 mb-6">
           ID #{success.appointment_id} · {success.appointment_date} · Status: {success.status}
         </p>
@@ -131,7 +130,12 @@ export default function PatientBooking() {
             <Button>View My Appointments</Button>
           </Link>
           <Button variant="outline" onClick={() => {
-            setSuccess(null); setDoctorId(''); setDate(''); setTime(''); setReason(''); setErrors({})
+            setSuccess(null)
+            setDoctorId('')
+            setDate('')
+            setTime('')
+            setReason('')
+            setErrors({})
           }}>
             Book Another
           </Button>
@@ -158,24 +162,6 @@ export default function PatientBooking() {
         </div>
       </div>
 
-      {/* Unlinked warning — shown but booking is blocked server-side anyway */}
-      {!isLinked && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-6 flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800"
-        >
-          <RiTimeLine size={18} className="shrink-0 mt-0.5" />
-          <div className="text-sm">
-            <p className="font-semibold">Account verification required</p>
-            <p className="mt-0.5">
-              Your patient record has not yet been linked by staff. You can browse doctors and departments,
-              but appointment booking will be enabled once a staff member verifies your account.
-            </p>
-          </div>
-        </motion.div>
-      )}
-
       {dataError && (
         <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 text-sm">
           Could not load doctors and departments. Make sure the backend is running.
@@ -199,7 +185,9 @@ export default function PatientBooking() {
               disabled={loadingData}
             >
               <option value="">All departments</option>
-              {depts.map((d) => <option key={d.department_id} value={d.department_id}>{d.department_name}</option>)}
+              {depts.map((d) => (
+                <option key={d.department_id} value={d.department_id}>{d.department_name}</option>
+              ))}
             </select>
           </div>
 
@@ -213,7 +201,7 @@ export default function PatientBooking() {
               value={doctorId}
               onChange={(e) => { setDoctorId(e.target.value); setErrors((prev) => ({ ...prev, doctorId: '' })) }}
               className={`w-full rounded-lg border px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-navy-200 ${errors.doctorId ? 'border-red-400' : 'border-gray-300 focus:border-navy-500'}`}
-              disabled={loadingData || !isLinked}
+              disabled={loadingData}
             >
               <option value="">Choose a doctor…</option>
               {filteredDoctors.map((d) => (
@@ -238,7 +226,6 @@ export default function PatientBooking() {
               value={date}
               onChange={(e) => { setDate(e.target.value); setErrors((p) => ({ ...p, date: '' })) }}
               error={errors.date}
-              disabled={!isLinked}
               min={new Date().toISOString().split('T')[0]}
             />
             <Input
@@ -248,7 +235,6 @@ export default function PatientBooking() {
               value={time}
               onChange={(e) => { setTime(e.target.value); setErrors((p) => ({ ...p, time: '' })) }}
               error={errors.time}
-              disabled={!isLinked}
             />
           </div>
 
@@ -259,26 +245,18 @@ export default function PatientBooking() {
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Briefly describe the reason for your visit (optional)"
-            disabled={!isLinked}
           />
 
           <Button
             type="submit"
             loading={saving}
-            disabled={!isLinked || saving}
+            disabled={saving}
             className="w-full justify-center py-3"
             size="lg"
           >
-            {isLinked ? 'Confirm Appointment' : 'Account Verification Required'}
+            Confirm Appointment
           </Button>
         </form>
-
-        {!isLinked && (
-          <p className="text-xs text-center text-gray-400">
-            Booking will be enabled once a staff member links your patient record.{' '}
-            <Link to="/dashboard" className="text-teal-600 hover:underline">Return to Dashboard</Link>
-          </p>
-        )}
       </div>
     </div>
   )

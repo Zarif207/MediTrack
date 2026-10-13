@@ -44,13 +44,9 @@ def _install_overrides(profile: UserProfile) -> TestClient:
 
     async def fake_patient_id():
         if profile.role == "patient":
-            if profile.patient_id is None:
-                from fastapi import HTTPException, status as s
-                raise HTTPException(
-                    status_code=s.HTTP_403_FORBIDDEN,
-                    detail="Your account is not yet linked to a patient record.",
-                )
-            return profile.patient_id
+            # New behavior: return None for unlinked patients (not 403)
+            # Routes handle None gracefully (empty list, not error)
+            return profile.patient_id  # None when unlinked
         if profile.role == "user":
             from fastapi import HTTPException, status as s
             raise HTTPException(status_code=s.HTTP_403_FORBIDDEN, detail="Access denied.")

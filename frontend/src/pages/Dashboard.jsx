@@ -5,8 +5,8 @@ import {
   RiUserHeartLine, RiUserStarLine, RiCalendarCheckLine,
   RiMoneyDollarCircleLine, RiAddCircleLine, RiArrowRightLine,
   RiBuildingLine, RiMedicineBottleLine, RiFileList3Line,
-  RiCapsuleLine, RiShieldLine, RiCheckLine, RiTimeLine,
-  RiRefreshLine, RiStethoscopeLine,
+  RiCapsuleLine, RiCheckLine, RiTimeLine,
+  RiRefreshLine,
 } from 'react-icons/ri'
 import { appointmentsApi, patientsApi, doctorsApi, billsApi, medicalRecordsApi } from '../services/api'
 import { useAuth } from '../context/useAuth'
@@ -173,162 +173,13 @@ function UserDashboard({ profile }) {
 
 // ── Patient dashboard ─────────────────────────────────────────────────────────
 
+/**
+ * Unified patient dashboard — works whether or not a patient record exists.
+ * Booking is always available. Health data (records, bills) shows empty lists
+ * until a patient record is created by staff, which happens automatically on
+ * first booking.
+ */
 function PatientDashboard({ profile }) {
-  const isLinked = profile?.patient_id != null
-
-  if (!isLinked) return <UnlinkedPatientDashboard profile={profile} />
-  return <LinkedPatientDashboard profile={profile} />
-}
-
-/**
- * Onboarding dashboard for patients who have registered but have not yet
- * been linked to a patient record by staff.
- */
-function UnlinkedPatientDashboard({ profile }) {
-  const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'there'
-
-  return (
-    <div className="space-y-6 max-w-3xl">
-      {/* Welcome */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
-        <h2 className="text-2xl font-bold text-gray-900">Welcome to MediTrack, {displayName}!</h2>
-        <p className="text-gray-500 mt-1 text-sm">Your patient account has been created successfully.</p>
-      </motion.div>
-
-      {/* Account status card */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.1 }}
-        className="bg-amber-50 border border-amber-200 rounded-2xl p-6"
-      >
-        <div className="flex items-start gap-4">
-          <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
-            <RiTimeLine size={20} className="text-amber-600" />
-          </div>
-          <div className="flex-1">
-            <h3 className="font-semibold text-amber-900">Account Verification Pending</h3>
-            <p className="text-sm text-amber-800 mt-1 leading-relaxed">
-              Your account has been registered and is ready. A staff member will verify your identity
-              and link your patient record shortly. Once linked, you will have full access to your
-              medical records, prescriptions, and bills.
-            </p>
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center gap-2.5 text-sm text-amber-700">
-                <RiCheckLine size={16} className="text-green-600 shrink-0" />
-                <span>Account created and secured with Firebase Authentication</span>
-              </div>
-              <div className="flex items-center gap-2.5 text-sm text-amber-700">
-                <RiCheckLine size={16} className="text-green-600 shrink-0" />
-                <span>Role assigned: Patient</span>
-              </div>
-              <div className="flex items-center gap-2.5 text-sm text-amber-700">
-                <RiTimeLine size={16} className="text-amber-500 shrink-0" />
-                <span>Awaiting staff verification and patient record link</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Available actions while unlinked */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.2 }}
-      >
-        <h3 className="font-semibold text-gray-800 mb-3">What you can do now</h3>
-        <div className="grid sm:grid-cols-2 gap-3">
-          <Link
-            to="/appointments/book"
-            className="flex items-start gap-3 p-4 bg-white border border-teal-200 rounded-xl hover:border-teal-400 hover:shadow-md transition-all duration-200 group"
-          >
-            <div className="w-9 h-9 rounded-lg bg-teal-500 flex items-center justify-center shrink-0 group-hover:bg-teal-600 transition-colors">
-              <RiCalendarCheckLine size={17} className="text-white" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Book an Appointment</p>
-              <p className="text-xs text-gray-500 mt-0.5">Schedule a visit with one of our doctors</p>
-            </div>
-          </Link>
-
-          <Link
-            to="/public/doctors"
-            className="flex items-start gap-3 p-4 bg-white border border-gray-200 rounded-xl hover:shadow-md transition-all duration-200 group"
-          >
-            <div className="w-9 h-9 rounded-lg bg-blue-500 flex items-center justify-center shrink-0">
-              <RiStethoscopeLine size={17} className="text-white" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Find a Doctor</p>
-              <p className="text-xs text-gray-500 mt-0.5">Browse our specialist doctors</p>
-            </div>
-          </Link>
-
-          <Link
-            to="/public/departments"
-            className="flex items-start gap-3 p-4 bg-white border border-gray-200 rounded-xl hover:shadow-md transition-all duration-200 group"
-          >
-            <div className="w-9 h-9 rounded-lg bg-purple-500 flex items-center justify-center shrink-0">
-              <RiBuildingLine size={17} className="text-white" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Browse Departments</p>
-              <p className="text-xs text-gray-500 mt-0.5">Explore our medical departments</p>
-            </div>
-          </Link>
-
-          <div className="flex items-start gap-3 p-4 bg-gray-50 border border-gray-200 rounded-xl opacity-60 cursor-not-allowed">
-            <div className="w-9 h-9 rounded-lg bg-gray-300 flex items-center justify-center shrink-0">
-              <RiShieldLine size={17} className="text-white" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-600">My Health Records</p>
-              <p className="text-xs text-gray-400 mt-0.5">Available after account verification</p>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Profile info */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.3 }}
-        className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm"
-      >
-        <h3 className="font-semibold text-gray-800 mb-3">Your Account</h3>
-        <div className="space-y-2 text-sm">
-          {profile?.display_name && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Name</span>
-              <span className="font-medium text-gray-800">{profile.display_name}</span>
-            </div>
-          )}
-          {profile?.email && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Email</span>
-              <span className="font-medium text-gray-800">{profile.email}</span>
-            </div>
-          )}
-          <div className="flex justify-between">
-            <span className="text-gray-500">Role</span>
-            <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded-full text-xs font-medium capitalize">{profile?.role}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">Patient Record</span>
-            <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-medium">Pending verification</span>
-          </div>
-        </div>
-      </motion.div>
-    </div>
-  )
-}
-
-/**
- * Full health dashboard for patients with a linked patient record.
- */
-function LinkedPatientDashboard({ profile }) {
   const [appts, setAppts]     = useState([])
   const [bills, setBills]     = useState([])
   const [records, setRecords] = useState([])
@@ -369,7 +220,7 @@ function LinkedPatientDashboard({ profile }) {
           <p className="text-gray-500 mt-1 text-sm">Here is your personal health overview.</p>
         </div>
         <Link
-          to="/appointments/book"
+          to="/patient/book-appointment"
           className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium transition-colors shadow-sm shrink-0"
         >
           <RiCalendarCheckLine size={15} />
@@ -411,7 +262,7 @@ function LinkedPatientDashboard({ profile }) {
           <div className="flex flex-col items-center justify-center py-12 text-gray-400">
             <RiCalendarCheckLine size={28} className="mb-2" />
             <p className="text-sm mb-3">No appointments yet</p>
-            <Link to="/appointments/book" className="text-xs text-teal-600 hover:underline font-medium">
+            <Link to="/patient/book-appointment" className="text-xs text-teal-600 hover:underline font-medium">
               Book your first appointment →
             </Link>
           </div>

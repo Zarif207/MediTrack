@@ -22,19 +22,61 @@ import { useAuth } from '../context/useAuth'
  * Role-based sidebar visibility.
  * allowedRoles: undefined means visible to ALL authenticated users.
  * An empty allowedRoles array hides the item from everyone.
+ *
+ * Patient nav is intentionally limited to patient-relevant pages only.
+ * The staff "Appointments" management page is hidden from patients —
+ * they use "My Appointments" which is the same route but scoped server-side.
  */
 const NAV_ITEMS = [
   {
     to: '/dashboard',
     icon: RiDashboardLine,
     label: 'Dashboard',
-    // Dashboard is visible to all — but content is role-scoped inside the page
+    // visible to every role
   },
+  // ── Patient-only pages ────────────────────────────────────────────────────
+  {
+    to: '/patient/book-appointment',
+    icon: RiCalendarCheckLine,
+    label: 'Book Appointment',
+    allowedRoles: ['patient'],
+  },
+  {
+    to: '/appointments',
+    icon: RiCalendarCheckLine,
+    label: 'My Appointments',
+    allowedRoles: ['patient'],
+  },
+  {
+    to: '/medical-records',
+    icon: RiFileList3Line,
+    label: 'My Medical Records',
+    allowedRoles: ['patient'],
+  },
+  {
+    to: '/prescriptions',
+    icon: RiCapsuleLine,
+    label: 'My Prescriptions',
+    allowedRoles: ['patient'],
+  },
+  {
+    to: '/prescription-items',
+    icon: RiListCheck3,
+    label: 'My Rx Items',
+    allowedRoles: ['patient'],
+  },
+  {
+    to: '/bills',
+    icon: RiMoneyDollarCircleLine,
+    label: 'My Bills',
+    allowedRoles: ['patient'],
+  },
+  // ── Staff pages (hidden from patients) ────────────────────────────────────
   {
     to: '/patients',
     icon: RiUserHeartLine,
     label: 'Patients',
-    allowedRoles: ['admin', 'receptionist', 'doctor', 'patient'],
+    allowedRoles: ['admin', 'receptionist', 'doctor'],
   },
   {
     to: '/doctors',
@@ -52,25 +94,19 @@ const NAV_ITEMS = [
     to: '/appointments',
     icon: RiCalendarCheckLine,
     label: 'Appointments',
-    allowedRoles: ['admin', 'receptionist', 'doctor', 'patient'],
-  },
-  {
-    to: '/patient/book-appointment',
-    icon: RiCalendarCheckLine,
-    label: 'Book Appointment',
-    allowedRoles: ['patient'],
+    allowedRoles: ['admin', 'receptionist', 'doctor'],
   },
   {
     to: '/medical-records',
     icon: RiFileList3Line,
     label: 'Medical Records',
-    allowedRoles: ['admin', 'doctor', 'receptionist', 'patient'],
+    allowedRoles: ['admin', 'doctor', 'receptionist'],
   },
   {
     to: '/prescriptions',
     icon: RiCapsuleLine,
     label: 'Prescriptions',
-    allowedRoles: ['admin', 'doctor', 'pharmacist', 'patient'],
+    allowedRoles: ['admin', 'doctor', 'pharmacist'],
   },
   {
     to: '/medicines',
@@ -82,13 +118,13 @@ const NAV_ITEMS = [
     to: '/prescription-items',
     icon: RiListCheck3,
     label: 'Rx Items',
-    allowedRoles: ['admin', 'doctor', 'pharmacist', 'patient'],
+    allowedRoles: ['admin', 'doctor', 'pharmacist'],
   },
   {
     to: '/bills',
     icon: RiMoneyDollarCircleLine,
     label: 'Bills',
-    allowedRoles: ['admin', 'receptionist', 'accountant', 'patient'],
+    allowedRoles: ['admin', 'receptionist', 'accountant'],
   },
 ]
 

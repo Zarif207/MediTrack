@@ -58,24 +58,37 @@ export default function App() {
       {/* ── Staff dashboard — requires authentication ── */}
       <Route element={<ProtectedRoute />}>
         <Route element={<DashboardLayout />}>
-          <Route path="/dashboard"          element={<Dashboard />} />
-          <Route path="/patients"           element={<Patients />} />
-          <Route path="/doctors"            element={<Doctors />} />
-          <Route path="/departments"        element={<Departments />} />
-          <Route path="/appointments"       element={<Appointments />} />
-          <Route path="/medical-records"    element={<MedicalRecords />} />
-          <Route path="/medicines"          element={<Medicines />} />
-          <Route path="/prescriptions"      element={<Prescriptions />} />
-          <Route path="/prescription-items" element={<PrescriptionItems />} />
-          <Route path="/bills"              element={<Bills />} />
+          {/* Dashboard — visible to all authenticated users; content is role-scoped */}
+          <Route path="/dashboard" element={<Dashboard />} />
 
-          {/* Patient self-booking — accessible to all authenticated users */}
-          <Route path="/patient/book-appointment" element={<PatientBooking />} />
+          {/* Patient-only pages */}
+          <Route element={<ProtectedRoute allowedRoles={['patient']} />}>
+            <Route path="/patient/book-appointment" element={<PatientBooking />} />
+          </Route>
 
-          {/* Admin-only: user role management */}
+          {/* Shared: patient + staff can view (server enforces ownership scoping) */}
           <Route
-            element={<ProtectedRoute allowedRoles={['admin']} />}
+            element={<ProtectedRoute allowedRoles={['admin', 'receptionist', 'doctor', 'pharmacist', 'accountant', 'patient']} />}
           >
+            <Route path="/appointments"       element={<Appointments />} />
+            <Route path="/medical-records"    element={<MedicalRecords />} />
+            <Route path="/prescriptions"      element={<Prescriptions />} />
+            <Route path="/prescription-items" element={<PrescriptionItems />} />
+            <Route path="/bills"              element={<Bills />} />
+          </Route>
+
+          {/* Staff-only pages — patients get AccessDenied if they navigate directly */}
+          <Route
+            element={<ProtectedRoute allowedRoles={['admin', 'receptionist', 'doctor', 'pharmacist', 'accountant']} />}
+          >
+            <Route path="/patients"    element={<Patients />} />
+            <Route path="/doctors"     element={<Doctors />} />
+            <Route path="/departments" element={<Departments />} />
+            <Route path="/medicines"   element={<Medicines />} />
+          </Route>
+
+          {/* Admin-only */}
+          <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
             <Route path="/admin/users" element={<AdminUsers />} />
           </Route>
         </Route>
