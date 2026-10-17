@@ -166,6 +166,8 @@ export const authApi = {
   setRole: (uid, role) => patch(`/auth/users/${encodeURIComponent(uid)}/role`, { role }),
   linkPatient: (uid, patientId) =>
     patch(`/auth/users/${encodeURIComponent(uid)}/link-patient`, { patient_id: patientId }),
+  linkDoctor: (uid, doctorId) =>
+    patch(`/auth/users/${encodeURIComponent(uid)}/link-doctor`, { doctor_id: doctorId }),
 }
 
 export const patientsApi = resource('/patients/')

@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import allow_patient_or, require_permission
-from app.auth.ownership import is_patient, not_found, owns_appointment
+from app.auth.ownership import can_access, is_scoped, not_found
+from app.models.appointment import Appointment
 from app.database.dependencies import get_db
 from app.models.user_profile import UserProfile
 from app.routes.params import IdPath, IdQuery, Limit, Skip
@@ -27,9 +28,12 @@ router = APIRouter(prefix="/medical-records", tags=["Medical Records"])
 @router.post("/", response_model=MedicalRecordResponse, status_code=status.HTTP_201_CREATED)
 def create_medical_record_endpoint(
     data: MedicalRecordCreate,
-    _: Annotated[UserProfile, Depends(require_permission("medical_records:write"))],
+    current_user: Annotated[UserProfile, Depends(require_permission("medical_records:write"))],
     db: Session = Depends(get_db),
 ):
+    # Doctors may only write records for their own appointments.
+    if not can_access(current_user, db.get(Appointment, data.appointment_id)):
+        raise not_found("Appointment")
     return create_medical_record(db, data)
 
 
@@ -44,7 +48,7 @@ def list_medical_records(
     return get_medical_records(
         db, skip=skip, limit=limit,
         appointment_id=appointment_id,
-        owner=current_user if is_patient(current_user) else None,
+        owner=current_user if is_scoped(current_user) else None,
     )
 
 
@@ -57,7 +61,7 @@ def retrieve_medical_record(
     record = get_medical_record(db, record_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Medical record not found.")
-    if is_patient(current_user) and not owns_appointment(current_user, record.appointment):
+    if not can_access(current_user, record.appointment):
         raise not_found("Medical record")
     return record
 
@@ -66,11 +70,11 @@ def retrieve_medical_record(
 def edit_medical_record(
     record_id: IdPath,
     data: MedicalRecordUpdate,
-    _: Annotated[UserProfile, Depends(require_permission("medical_records:write"))],
+    current_user: Annotated[UserProfile, Depends(require_permission("medical_records:write"))],
     db: Session = Depends(get_db),
 ):
     record = get_medical_record(db, record_id)
-    if record is None:
+    if record is None or not can_access(current_user, record.appointment):
         raise HTTPException(status_code=404, detail="Medical record not found.")
     return update_medical_record(db, record, data)
 

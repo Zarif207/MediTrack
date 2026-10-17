@@ -21,6 +21,11 @@ development it is logged and authenticated endpoints answer `503`.
 Role changes take effect on the next request: the role is read from PostgreSQL every time, not from
 token claims.
 
+**Auth Emulator.** For local tests the Admin SDK can be pointed at the Firebase Auth Emulator with
+`FIREBASE_AUTH_EMULATOR_HOST`. In that mode it accepts unsigned tokens and does not check expiry, so
+the API refuses to start in `production` with the variable set and logs a warning otherwise. The
+frontend's `VITE_FIREBASE_AUTH_EMULATOR_HOST` is ignored in production builds.
+
 ## Permission matrix
 
 Defined once in `backend/app/auth/permissions.py`; routes declare the permission they need. The
@@ -34,14 +39,19 @@ values (`ck_user_profiles_role`).
 | Patients | read · write · delete | read · write | read | – | read | own file |
 | Departments, doctors (directory) | public read · write · delete | public read | public read | public read | public read | public read |
 | Doctor contact & licence details | ✓ | ✓ | ✓ | ✓ | ✓ | – |
-| Appointments | read · write · delete | read · write | read | – | read | own · book · cancel own |
-| Medical records | read · write · delete | – | read · write | – | – | own |
+| Appointments | read · write · delete | read · write | read (own†) | – | read | own · book · cancel own |
+| Medical records | read · write · delete | – | read · write (own†) | – | – | own |
 | Medicines | read · write · delete | – | read | read · write | – | – |
-| Prescriptions | read · write · delete | – | read · write | read | – | own |
-| Prescription items | read · write · delete | – | read · write · delete | read | – | own |
+| Prescriptions | read · write · delete | – | read · write (own†) | read | – | own |
+| Prescription items | read · write · delete | – | read · write · delete (own†) | read | – | own |
 | Bills | read · write · delete | read · write | – | – | read · write | own |
 
 `user` (Awaiting access): own profile only.
+
+† A doctor account is limited to the appointments of the doctor record an administrator linked it to
+(`user_profiles.doctor_id`), and to the medical records, prescriptions and items on those
+appointments — for reads and writes. An unlinked doctor account sees none of them. Patient
+demographics (`patients:read`) and the medicine formulary are not doctor-scoped.
 
 Changes from the previous matrix, and why:
 
@@ -54,6 +64,16 @@ Changes from the previous matrix, and why:
   failed with `403`).
 - Previously any non-patient, non-`user` role — including unknown roles — could read every medical
   record, prescription and bill. That is now denied by default.
+
+## Doctor scope (`backend/app/auth/ownership.py`)
+
+- `PATCH /auth/users/{uid}/link-doctor` (admin only) sets `user_profiles.doctor_id`; one doctor record
+  links to at most one account; nothing is matched by email.
+- Doctor queries use `appointments.doctor_id = user_profiles.doctor_id`; with no link the clause is
+  `FALSE`, so lists are empty and detail requests return `404`.
+- Creating or editing a medical record, prescription or prescription item requires the parent
+  appointment to be in the doctor's scope (`404` otherwise). Query filters cannot widen the scope.
+- Admins, pharmacists and other staff are not row-scoped.
 
 ## Patient data ownership (`backend/app/auth/ownership.py`)
 

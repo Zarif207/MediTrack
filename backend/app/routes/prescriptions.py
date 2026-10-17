@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import allow_patient_or, require_permission
-from app.auth.ownership import is_patient, not_found, owns_appointment
+from app.auth.ownership import can_access, is_scoped, not_found
+from app.models.medical_record import MedicalRecord
 from app.database.dependencies import get_db
 from app.models.user_profile import UserProfile
 from app.routes.params import IdPath, IdQuery, Limit, Skip
@@ -26,15 +27,18 @@ router = APIRouter(prefix="/prescriptions", tags=["Prescriptions"])
 
 def _owned(user: UserProfile, prescription) -> bool:
     record = prescription.medical_record
-    return record is not None and owns_appointment(user, record.appointment)
+    return record is not None and can_access(user, record.appointment)
 
 
 @router.post("/", response_model=PrescriptionResponse, status_code=status.HTTP_201_CREATED)
 def create_prescription_endpoint(
     data: PrescriptionCreate,
-    _: Annotated[UserProfile, Depends(require_permission("prescriptions:write"))],
+    current_user: Annotated[UserProfile, Depends(require_permission("prescriptions:write"))],
     db: Session = Depends(get_db),
 ):
+    record = db.get(MedicalRecord, data.record_id)
+    if record is not None and not can_access(current_user, record.appointment):
+        raise not_found("Medical record")
     return create_prescription(db, data)
 
 
@@ -49,7 +53,7 @@ def list_prescriptions(
     return get_prescriptions(
         db, skip=skip, limit=limit,
         record_id=record_id,
-        owner=current_user if is_patient(current_user) else None,
+        owner=current_user if is_scoped(current_user) else None,
     )
 
 
@@ -62,7 +66,7 @@ def retrieve_prescription(
     prescription = get_prescription(db, prescription_id)
     if prescription is None:
         raise HTTPException(status_code=404, detail="Prescription not found.")
-    if is_patient(current_user) and not _owned(current_user, prescription):
+    if not _owned(current_user, prescription):
         raise not_found("Prescription")
     return prescription
 
@@ -71,11 +75,11 @@ def retrieve_prescription(
 def edit_prescription(
     prescription_id: IdPath,
     data: PrescriptionUpdate,
-    _: Annotated[UserProfile, Depends(require_permission("prescriptions:write"))],
+    current_user: Annotated[UserProfile, Depends(require_permission("prescriptions:write"))],
     db: Session = Depends(get_db),
 ):
     prescription = get_prescription(db, prescription_id)
-    if prescription is None:
+    if prescription is None or not _owned(current_user, prescription):
         raise HTTPException(status_code=404, detail="Prescription not found.")
     return update_prescription(db, prescription, data)
 

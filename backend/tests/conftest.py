@@ -57,6 +57,14 @@ _ensure_test_database()
 
 import pytest  # noqa: E402
 
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "firebase_emulator: uses the Firebase Auth Emulator (FIREBASE_AUTH_EMULATOR_HOST) "
+        "instead of the fake token verifier",
+    )
+
 import app.models  # noqa: E402,F401  (registers all tables)
 from app.database.base import Base  # noqa: E402
 from app.database.connection import engine  # noqa: E402
@@ -119,8 +127,12 @@ def _fake_verify_id_token(token, check_revoked=False, **_):
 
 
 @pytest.fixture(autouse=True)
-def fake_firebase(monkeypatch):
+def fake_firebase(request, monkeypatch):
     TOKEN_CLAIMS.clear()
+    if request.node.get_closest_marker("firebase_emulator"):
+        # Real Admin SDK verification against the local Auth Emulator.
+        yield TOKEN_CLAIMS
+        return
     monkeypatch.setattr(auth_deps.firebase_auth, "verify_id_token", _fake_verify_id_token)
     monkeypatch.setattr(auth_deps, "_is_firebase_configured", lambda: True)
     yield TOKEN_CLAIMS

@@ -66,3 +66,16 @@ def test_production_settings_reject_unsafe_values():
     ok = Settings(app_env="production", database_url="postgresql://x/y",
                   allowed_origins="https://meditrack.example", db_echo=False)
     assert ok.cors_origins == ["https://meditrack.example"]
+
+
+def test_production_refuses_auth_emulator(monkeypatch):
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    monkeypatch.setenv("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099")
+    with pytest.raises(ValidationError, match="FIREBASE_AUTH_EMULATOR_HOST"):
+        Settings(app_env="production", database_url="postgresql://x/y",
+                 allowed_origins="https://meditrack.example", db_echo=False)
+    # Development still allows it for local testing.
+    assert Settings(app_env="development", database_url="postgresql://x/y").app_env == "development"

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import allow_patient_or, require_patient, require_permission
-from app.auth.ownership import is_patient, not_found, owns_appointment
+from app.auth.ownership import can_access, is_patient, is_scoped, not_found, owns_appointment
 from app.database.dependencies import get_db
 from app.models.user_profile import UserProfile
 from app.routes.params import IdPath, IdQuery, Limit, Skip
@@ -90,6 +90,8 @@ def list_appointments(
         patient_id=patient_id,
         doctor_id=doctor_id,
         appointment_status=appointment_status,
+        # Doctors see only appointments with the doctor record linked to them.
+        owner=current_user if is_scoped(current_user) else None,
     )
 
 
@@ -102,7 +104,7 @@ def retrieve_appointment(
     appointment = get_appointment(db, appointment_id)
     if appointment is None:
         raise HTTPException(status_code=404, detail="Appointment not found.")
-    if is_patient(current_user) and not owns_appointment(current_user, appointment):
+    if not can_access(current_user, appointment):
         raise not_found("Appointment")
     return appointment
 

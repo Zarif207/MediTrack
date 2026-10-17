@@ -77,6 +77,17 @@ class UserProfile(Base):
         comment="FK to patients.patient_id — set by admin only, never by the user",
     )
 
+    # Which doctor record a doctor-role account acts as. Set by an admin only;
+    # a doctor account without it can access no appointments or clinical data.
+    doctor_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("doctors.doctor_id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        default=None,
+        comment="FK to doctors.doctor_id — set by admin only, never by the user",
+    )
+
     display_name: Mapped[str | None] = mapped_column(
         String(200),
         nullable=True,

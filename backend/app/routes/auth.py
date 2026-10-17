@@ -13,6 +13,7 @@ Admin only (users:manage):
     GET   /auth/users                    — list all profiles.
     PATCH /auth/users/{uid}/role         — set a user's role.
     PATCH /auth/users/{uid}/link-patient — link/unlink an account and a patient record.
+    PATCH /auth/users/{uid}/link-doctor  — link/unlink an account and a doctor record.
 """
 from datetime import datetime
 from typing import Annotated, Literal
@@ -30,6 +31,7 @@ from app.auth.dependencies import (
 from app.auth.permissions import permissions_for
 from app.database.dependencies import get_db
 from app.models.appointment import Appointment
+from app.models.doctor import Doctor
 from app.models.patient import Patient
 from app.models.user_profile import UserProfile
 
@@ -49,6 +51,7 @@ class UserProfileResponse(BaseModel):
     display_name: str | None
     email: str | None
     patient_id: int | None
+    doctor_id: int | None = None
     created_at: datetime | None = None
 
 
@@ -70,6 +73,10 @@ class RoleUpdateRequest(BaseModel):
 
 class LinkPatientRequest(BaseModel):
     patient_id: int | None = Field(default=None, gt=0, le=2**63 - 1)
+
+
+class LinkDoctorRequest(BaseModel):
+    doctor_id: int | None = Field(default=None, gt=0, le=2**63 - 1)
 
 
 class DisplayNameUpdateRequest(BaseModel):
@@ -271,6 +278,47 @@ def link_patient(
             if appointment.medical_record is None and appointment.bill is None:
                 appointment.patient_id = body.patient_id
 
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@router.patch(
+    "/users/{uid}/link-doctor",
+    response_model=UserProfileResponse,
+    summary="Admin: link (or unlink) a Firebase account to a doctor record",
+)
+def link_doctor(
+    uid: Uid,
+    body: LinkDoctorRequest,
+    _: AdminUser,
+    db: Session = Depends(get_db),
+):
+    """
+    Sets user_profiles.doctor_id. A doctor-role account can read and write only
+    the appointments and clinical records of the doctor it is linked to; until
+    it is linked it can access none. Nothing is linked automatically by email.
+    """
+    profile = db.get(UserProfile, uid)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="User profile not found.")
+
+    if body.doctor_id is not None:
+        if db.get(Doctor, body.doctor_id) is None:
+            raise HTTPException(status_code=404, detail="Doctor not found.")
+        other = db.scalars(
+            select(UserProfile).where(
+                UserProfile.doctor_id == body.doctor_id,
+                UserProfile.firebase_uid != uid,
+            )
+        ).first()
+        if other is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="This doctor record is already linked to another account.",
+            )
+
+    profile.doctor_id = body.doctor_id
     db.commit()
     db.refresh(profile)
     return profile

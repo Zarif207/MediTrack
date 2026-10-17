@@ -1,3 +1,4 @@
+import os
 from typing import Literal
 
 from pydantic import field_validator, model_validator
@@ -58,6 +59,9 @@ class Settings(BaseSettings):
             problems.append("ALLOWED_ORIGINS must not include localhost in production.")
         if self.db_echo:
             problems.append("DB_ECHO must be false in production.")
+        if os.getenv("FIREBASE_AUTH_EMULATOR_HOST"):
+            # In emulator mode the Admin SDK accepts unsigned, unexpiring tokens.
+            problems.append("FIREBASE_AUTH_EMULATOR_HOST must not be set in production.")
         if problems:
             raise ValueError(" ".join(problems))
         return self

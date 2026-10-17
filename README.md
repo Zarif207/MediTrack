@@ -72,6 +72,7 @@ python migrate_add_user_profiles.py
 python migrate_add_patient_link.py
 python migrate_appointments_firebase_uid.py
 python migrate_appointment_ownership.py    # nullable appointments.patient_id + integrity guards
+python migrate_add_doctor_link.py          # user_profiles.doctor_id (doctor accounts → doctor records)
 ```
 
 `create_all()` never alters existing tables — editing a model does not change a live database.
@@ -87,7 +88,8 @@ Authentication → Users, then:
 python create_admin.py <firebase_uid> "Display Name" admin@example.com
 ```
 
-Further roles are assigned in the app under **Users & roles**.
+Further roles are assigned in the app under **Users & roles**. Doctor accounts must also be linked to
+their doctor record there; until then they see no appointments or clinical records.
 
 ### Run
 
@@ -115,9 +117,18 @@ Never put service-account keys or database credentials in a `VITE_*` variable: V
 ## 3. Tests and checks
 
 ```bash
-cd backend && python -m pytest -q          # 439 tests, isolated meditrack_db_test database
+cd backend && python -m pytest -q          # 464 tests (+6 emulator tests skipped), meditrack_db_test only
 cd frontend && npm run lint && npm run build
 ```
+
+Real Firebase ID tokens, via the local Auth Emulator (no production contact):
+
+```bash
+npx firebase-tools@15.34.0 emulators:start --only auth --project meditrack-7fe46
+cd backend && FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 python -m pytest tests/test_firebase_emulator.py
+```
+
+Browser end-to-end tests and a manual procedure for real Firebase: [e2e/README.md](e2e/README.md).
 
 The test suite creates `meditrack_db_test` if needed and rebuilds its schema on every run. It refuses
 to run against any database whose name does not end in `_test`, so development data is never touched.
@@ -140,7 +151,6 @@ any time. See [docs/SECURITY.md](docs/SECURITY.md) for the full rules.
 
 ## 5. Known limitations
 
-- Doctor accounts are not linked to doctor records, so every doctor can read all medical records.
 - No per-doctor working hours or leave; one clinic-wide booking window applies.
 - No rate limiting on the API (the client handles `429` if a proxy adds it).
 - Times use the server's local clock; there is no timezone handling.

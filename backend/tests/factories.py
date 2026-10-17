@@ -41,9 +41,9 @@ class World:
     uids: dict = field(default_factory=dict)
 
 
-def make_profile(db: Session, uid: str, role: str, patient_id=None, name=None) -> UserProfile:
+def make_profile(db: Session, uid: str, role: str, patient_id=None, name=None, doctor_id=None) -> UserProfile:
     p = UserProfile(
-        firebase_uid=uid, role=role, patient_id=patient_id,
+        firebase_uid=uid, role=role, patient_id=patient_id, doctor_id=doctor_id,
         display_name=name or f"Test {role.title()}",
         email=f"{uid.lower()}@test.invalid", created_at=datetime.now(),
     )
@@ -98,7 +98,13 @@ def build_world(db: Session) -> World:
     uids = {}
     for role in STAFF + ("user",):
         uids[role] = f"UID_{role.upper()}"
-        make_profile(db, uids[role], role)
+        # The main doctor account acts as `doctor` (Dr. Okafor), who holds
+        # appt_a and appt_b and therefore all of the fixture's clinical data.
+        make_profile(db, uids[role], role, doctor_id=doctor.doctor_id if role == "doctor" else None)
+    uids["doctor2"] = "UID_DOCTOR2"
+    make_profile(db, "UID_DOCTOR2", "doctor", doctor_id=doctor2.doctor_id, name="Ben Iyer")
+    uids["doctor_unlinked"] = "UID_DOCTOR_UNLINKED"
+    make_profile(db, "UID_DOCTOR_UNLINKED", "doctor", name="Unlinked Doctor")
     uids["patient_a"] = "UID_PATIENT_A"
     make_profile(db, "UID_PATIENT_A", "patient", patient_id=pa.patient_id, name="Alice Synthetic")
     uids["patient_b"] = "UID_PATIENT_B"

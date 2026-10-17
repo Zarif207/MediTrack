@@ -36,3 +36,12 @@ Resume from the last unchecked item. Each checked item was verified as noted.
 Frontend verified: lint clean, build without warnings, headless Chrome at 390/768/1280 px
 (no horizontal overflow). One crash found and fixed during browser testing (useAsync stale data).
 Not verified here: real Firebase sign-in end-to-end.
+
+## Follow-up pass (2026-10-17)
+- [x] Doctor scoping (`user_profiles.doctor_id`, migration applied after copy verification)
+- [x] Auth Emulator integration tests (6) and production guard for the emulator variable
+- [x] Browser end-to-end suite `e2e/` (31 checks, 3 clean runs)
+- [x] Sidebar "Back to home"; sign-out now lands on the home page
+- [x] npm audit re-checked: no compatible fix; unchanged
+- [x] Flagged dev rows inspected read-only; recommendations in AUDIT_REPORT.md
+- [ ] Manual real-Firebase verification (owner)

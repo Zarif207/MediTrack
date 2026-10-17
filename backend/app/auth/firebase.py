@@ -1,5 +1,6 @@
 """Firebase Admin SDK initialization."""
 import logging
+import os
 
 import firebase_admin
 from firebase_admin import credentials
@@ -20,6 +21,12 @@ def initialize_firebase() -> None:
     """
     if firebase_admin._apps:
         return
+
+    if os.getenv("FIREBASE_AUTH_EMULATOR_HOST"):
+        logger.warning(
+            "FIREBASE_AUTH_EMULATOR_HOST is set: ID tokens are NOT signature- or "
+            "expiry-checked. Use only for local testing."
+        )
 
     options = {"projectId": settings.firebase_project_id}
     try:

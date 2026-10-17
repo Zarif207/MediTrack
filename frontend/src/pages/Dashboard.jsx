@@ -217,6 +217,12 @@ function StaffDashboard() {
         <Panel><ErrorState error={error} onRetry={reload} /></Panel>
       ) : (
         <div className="space-y-6">
+          {role === 'doctor' && profile?.doctor_id == null && (
+            <Alert tone="warn" title="Your account is not linked to a doctor record">
+              Appointments, medical records and prescriptions appear once an administrator links your account to your doctor
+              record under Users &amp; roles.
+            </Alert>
+          )}
           {figures.length > 0 && (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {figures.map((f) => <Figure key={f.label} {...f} />)}

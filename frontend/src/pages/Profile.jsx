@@ -45,6 +45,7 @@ export default function Profile() {
           <DetailList items={[
             ['Email', user?.email],
             ['Role', ROLE_LABELS[profile?.role] ?? profile?.role],
+            profile?.role === 'doctor' && ['Doctor record', profile?.doctor_id ? `Linked (#${profile.doctor_id})` : 'Not linked — ask an administrator'],
             profile?.role === 'patient' && ['Patient file', profile?.patient_id ? `Linked (#${profile.patient_id})` : 'Not linked yet — the clinic links it after your first visit'],
           ]} />
         </Panel>

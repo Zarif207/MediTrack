@@ -2,7 +2,9 @@
 
 57 operations (from the generated OpenAPI schema). All errors are `{"detail": ...}`.
 "Patient (own)" means the endpoint is scoped to the caller's data via `app/auth/ownership.py`;
-other patients' IDs return `404`. Permissions are listed in [SECURITY.md](SECURITY.md).
+other patients' IDs return `404`. Doctor accounts are scoped the same way on appointments, medical
+records, prescriptions and prescription items: only the linked doctor's appointments (none if
+unlinked), for reads and writes. Permissions are listed in [SECURITY.md](SECURITY.md).
 
 Common errors on every authenticated route: `401` (no/invalid/expired/revoked token),
 `403` (role lacks the permission, or role is `user`), `503` (auth or database unavailable),
@@ -20,6 +22,7 @@ Every list accepts `skip`/`limit` and returns a JSON array; the frontend pages t
 | PATCH | `/auth/me` | any signed-in | Body `{display_name}` only |
 | GET | `/auth/users` | `users:manage` | All profiles |
 | PATCH | `/auth/users/{uid}/role` | `users:manage` | Body `{role}`; `404` unknown uid; `409` self-demotion or last admin; `patient → user` clears the link |
+| PATCH | `/auth/users/{uid}/link-doctor` | `users:manage` | Body `{doctor_id \| null}`; `404` doctor/uid; `409` doctor linked to another account. Doctor accounts are scoped to the linked doctor's appointments. |
 | PATCH | `/auth/users/{uid}/link-patient` | `users:manage` | Body `{patient_id \| null}`; `404` patient; `409` file linked to another account. Moves the account's own bookings without clinical data to the new link. |
 
 ## Directory (public reads)
@@ -89,4 +92,6 @@ Every list accepts `skip`/`limit` and returns a JSON array; the frontend pages t
 
 Each row is covered in `backend/tests/`: `test_permission_matrix.py` (every role × every
 list/create/update/delete route), `test_auth.py`, `test_roles.py`, `test_booking.py` (including a
-concurrent-booking race), `test_ownership.py`, `test_crud.py`, `test_errors.py`.
+concurrent-booking race), `test_ownership.py`, `test_doctor_scope.py`, `test_crud.py`,
+`test_errors.py`, and `test_firebase_emulator.py` (real ID tokens from the Auth Emulator; skipped
+unless `FIREBASE_AUTH_EMULATOR_HOST` is set). Browser end-to-end checks are in `e2e/`.

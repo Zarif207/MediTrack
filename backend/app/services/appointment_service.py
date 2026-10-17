@@ -172,7 +172,7 @@ def get_appointments(
     appointment_status: str | None = None,
     owner: UserProfile | None = None,
 ) -> list[Appointment]:
-    """List appointments. When `owner` is given, only that patient's are returned."""
+    """List appointments. When `owner` is given, only rows in their scope are returned."""
     stmt = _with_relations(select(Appointment)).order_by(
         Appointment.appointment_date,
         Appointment.appointment_time,
@@ -180,7 +180,7 @@ def get_appointments(
     )
     if owner is not None:
         stmt = stmt.where(owned_appointment_clause(owner))
-    elif patient_id is not None:
+    if patient_id is not None:
         stmt = stmt.where(Appointment.patient_id == patient_id)
     if doctor_id is not None:
         stmt = stmt.where(Appointment.doctor_id == doctor_id)

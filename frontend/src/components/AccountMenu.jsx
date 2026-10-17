@@ -27,8 +27,10 @@ export default function AccountMenu() {
 
   async function handleSignOut() {
     setOpen(false)
-    await signOut()
+    // Leave the protected area first; otherwise the route guard reacts to the
+    // signed-out state and sends the user to the sign-in page instead of home.
     navigate('/', { replace: true })
+    await signOut()
   }
 
   return (

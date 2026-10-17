@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router'
+import { Link, NavLink } from 'react-router'
+import { RiHomeLine } from 'react-icons/ri'
 import { useAuth } from '../context/useAuth'
 import { visibleSections } from '../config/navigation'
 import Brand from './Brand'
@@ -50,6 +51,18 @@ export default function AppSidebar({ onNavigate }) {
           </div>
         ))}
       </nav>
+      {/* Return to the public site. The session is kept: the site header then
+          offers "Open MediTrack" to come back. */}
+      <div className="shrink-0 border-t border-ink-100 px-2.5 py-2.5">
+        <Link
+          to="/"
+          onClick={onNavigate}
+          className="group flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] text-ink-600 transition-colors hover:bg-ink-50 hover:text-ink-900"
+        >
+          <RiHomeLine aria-hidden size={17} className="text-ink-400 group-hover:text-ink-600" />
+          Back to home
+        </Link>
+      </div>
     </div>
   )
 }

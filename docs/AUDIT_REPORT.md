@@ -35,9 +35,11 @@ permissions makes 31 fail.
 | S11 | The frontend invented a `patient` role when the backend was unreachable. | **Fixed** — shows a recovery screen instead. |
 | S12 | An admin could demote themselves and lock everyone out. | **Fixed** |
 | S13 | `.env.*` in `.gitignore` also ignored `.env.example`; no patterns for service-account JSON or keys. | **Fixed**. History scan: no `.env`, JSON credentials or private keys were ever committed. |
-| S14 | Doctor accounts are not tied to doctor records, so any doctor can read every medical record. | **Open** — needs a `user_profiles.doctor_id` link and scoping; documented. |
+| S14 | Doctor accounts were not tied to doctor records, so any doctor could read every medical record. | **Fixed (follow-up)** — admin-set `user_profiles.doctor_id`; doctors are scoped to their own appointments and the clinical data on them, for reads and writes; unlinked doctors see nothing. |
 | S15 | No API rate limiting (sign-in throttling is handled by Firebase). | **Future** |
-| A1 | `npm audit`: `@grpc/grpc-js` 1.9.16 (GHSA-m9gg-hp2v-232j, GHSA-f596-whhp-79r4), pinned `~1.9.0` by `@firebase/firestore`. | **Accepted** — grpc-js only runs in Node, and the app never imports Firestore, so it is not in the browser bundle. Upgrade `firebase` when a release bumps the pin. |
+| A1 | `npm audit`: `@grpc/grpc-js` 1.9.16 (GHSA-m9gg-hp2v-232j, GHSA-f596-whhp-79r4), pinned `~1.9.0` by `@firebase/firestore`. | **Accepted** — re-checked in the follow-up: no compatible fix exists (1.9.16 is the last 1.9.x; firebase 11.10.0 is the latest 11.x and firebase 13.0.0 still pins `~1.9.0`; npm's suggestion is a breaking downgrade to firebase 9.14.0). The built bundle contains no grpc code and the app imports only `firebase/app` and `firebase/auth`. Upgrade when Firebase bumps the pin. |
+| S16 | The Admin SDK skips signature and expiry checks when `FIREBASE_AUTH_EMULATOR_HOST` is set; a stray variable in production would accept forged tokens. | **Fixed (follow-up)** — production startup refuses it; development logs a warning; the frontend ignores its emulator variable in production builds. |
+| S17 | "Sign out" from inside the app landed on the sign-in page instead of home (route guard raced the navigation). Found by the browser test. | **Fixed (follow-up)** |
 
 ## Backend fixes
 
@@ -92,8 +94,7 @@ checksum unchanged; constraints reject duplicates, ownerless rows and unknown ro
 `meditrack_db` on 2026-10-17 with row counts unchanged. Rollback statements are in the script's docstring;
 reverting `NOT NULL` is impossible once unlinked bookings exist.
 
-Data left for manual review (not modified): one placeholder patient created by the old auto-create
-flow, and one profile whose UID matches the old test-fixture prefixes.
+Data left for manual review (not modified) — see the follow-up section below.
 
 ## Verification performed
 
@@ -126,3 +127,32 @@ credentials available to the agent); screen-reader output; Safari/Firefox.
 Link doctor accounts to doctor records and scope clinical access; per-doctor schedules; rate limiting;
 Alembic migrations; audit log of clinical reads/writes; timezone-aware timestamps; server-side search
 and pagination totals; Playwright end-to-end tests with a Firebase Auth emulator.
+
+
+## Follow-up pass — 2026-10-17
+
+| Item | Result |
+|---|---|
+| Doctor authorization | `migrate_add_doctor_link.py` (additive, idempotent) verified on a DB copy, then applied to `meditrack_db`; row counts unchanged. The one existing doctor-role account is unlinked and has no clinical access until an admin links it. 24 regression tests in `test_doctor_scope.py`; disabling doctor scoping makes 12 of them fail. |
+| Real Firebase tokens | `tests/test_firebase_emulator.py`: 6 tests through the real `verify_id_token(check_revoked=True)` against the Firebase Auth Emulator — sign-up → register, wrong audience/malformed tokens, refreshed tokens, revoked sessions, disabled accounts, admin promotion and booking with real tokens. **Production Firebase was not tested**; see the manual procedure in `e2e/README.md`. |
+| Browser end-to-end | `e2e/run.mjs`: 31 checks, real Chrome → app → API → emulator → `meditrack_db_test`; passed three consecutive runs. |
+| Back to home | Sidebar footer link to `/` (shared by desktop sidebar and mobile drawer, so every role gets it). Browser test confirms it keeps the session and returning to the dashboard does not loop. |
+| Dependencies | See A1. No packages changed. |
+
+### Flagged development rows (read-only inspection, not modified)
+
+- **Patient #176** — placeholder created by the old auto-create flow (DOB 1900-01-01, phone
+  `0000000000`, gender "Unknown"). It is **in use**: linked to one patient-role account, with
+  appointment #244 (booked online, scheduled 2026-10-20, doctor #12), one medical record, one
+  prescription and one bill. Do not delete it. Recommended: confirm the person's identity, then have
+  reception edit #176 with their real details (Patients → Edit).
+- **Profile `PYTEST_REG_TEST`** — created by the old `test_register_open` test (role `user`, display
+  name "Test", no patient link, no bookings, referenced by nothing). Safe to remove once you approve:
+  `DELETE FROM user_profiles WHERE firebase_uid = 'PYTEST_REG_TEST';`
+
+### Checks that need you
+
+1. Link the existing doctor account to its doctor record (Users & roles) — until then it sees no clinical data.
+2. Run the real-Firebase manual procedure in `e2e/README.md` with dedicated test accounts.
+3. Decide on the two rows above.
+4. Restart your running dev API (it was started before this pass) so it loads the new code.

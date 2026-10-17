@@ -12,7 +12,7 @@
  * VITE_* variable — Vite exposes these to browser code.
  */
 import { initializeApp } from 'firebase/app'
-import { getAuth } from 'firebase/auth'
+import { connectAuthEmulator, getAuth } from 'firebase/auth'
 
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -30,5 +30,12 @@ const app = isFirebaseConfigured ? initializeApp(firebaseConfig) : null
 
 /** Firebase Auth instance — null if Firebase is not configured */
 export const auth = app ? getAuth(app) : null
+
+// Local testing only: point sign-in at the Firebase Auth Emulator. Ignored in
+// production builds, so a stray variable can never redirect real users.
+const emulatorHost = import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST
+if (auth && emulatorHost && import.meta.env.DEV) {
+  connectAuthEmulator(auth, `http://${emulatorHost}`, { disableWarnings: true })
+}
 
 export default app
