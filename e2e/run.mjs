@@ -69,6 +69,24 @@ async function shot(name) {
 }
 const path = () => js('location.pathname')
 
+// Click a visible link by its text inside an optional container and report where it lands.
+async function followLink(text, scope = 'main') {
+  const ok = await js(`(() => { const el = [...document.querySelectorAll('${scope} a')].find(a => a.textContent.trim().startsWith(${JSON.stringify(text)}) && a.offsetParent !== null); if (!el) return false; el.scrollIntoView(); el.click(); return true })()`)
+  await sleep(700)
+  return ok ? js('location.pathname + location.hash') : null
+}
+async function homepageChecks(label) {
+  // Every image on the page must load (scroll so lazy images are requested).
+  await js('(async () => { for (let y = 0; y < document.body.scrollHeight; y += 600) { scrollTo(0, y); await new Promise(r => setTimeout(r, 120)) } scrollTo(0, 0); return true })()')
+  await waitFor(`[...document.querySelectorAll('main img')].every(i => i.complete)`, 'homepage images to finish loading')
+  const imgs = await js(`[...document.querySelectorAll('main img')].map(i => ({ src: i.currentSrc.split('/').pop(), ok: i.naturalWidth > 0, alt: i.alt }))`)
+  check(imgs.length >= 5 && imgs.every((i) => i.ok), `${label}: all ${imgs.length} homepage photos load (${imgs.filter((i) => !i.ok).map((i) => i.src).join(', ') || 'none broken'})`)
+  check(imgs.every((i) => i.alt.length > 15), `${label}: every photo has descriptive alt text`)
+  check(await js(`document.querySelectorAll('main h1').length === 1 && !!document.querySelector('main h1').textContent.includes('booked in minutes')`), `${label}: one h1 (hero headline)`)
+  check(await js(`!!document.querySelector('#how-it-works')`), `${label}: "How booking works" anchor target exists`)
+  check(await js('document.documentElement.scrollWidth <= innerWidth'), `${label}: no horizontal overflow`)
+}
+
 await send('Runtime.enable')
 await viewport(1280)
 const stamp = Date.now().toString(36)
@@ -80,6 +98,56 @@ await fetch(`http://${EMU}/emulator/v1/projects/${process.env.FIREBASE_PROJECT_I
 await go('/')
 await js('indexedDB.deleteDatabase("firebaseLocalStorageDb"); localStorage.clear(); true')
 await go('/')
+
+// 0. Homepage, signed out: every link goes somewhere real.
+await go('/')
+await waitFor(`!!document.querySelector('main h1')`, 'homepage')
+await homepageChecks('signed out')
+const links = [
+  ['Book an appointment', '/appointments/book', 'main'],
+  ['Meet our doctors', '/public/doctors', 'main'],
+  ['Browse all departments', '/public/departments', 'main'],
+  ['Cardiology', '/public/departments', 'main'],
+  ['Start booking', '/appointments/book', 'main'],
+  ['Full directory', '/public/doctors', 'main'],
+  ['Create an account', '/auth/sign-up', 'main'],
+  ['Book appointment', '/appointments/book', 'header'],
+  ['Sign in', '/auth/sign-in', 'header'],
+  ['Create account', '/auth/sign-up', 'header'],
+  ['Departments', '/public/departments', 'header nav'],
+  ['Doctors', '/public/doctors', 'header nav'],
+  ['About', '/about', 'header nav'],
+]
+for (const [text, expected, scope] of links) {
+  await go('/')
+  await waitFor(`!!document.querySelector('main h1')`, 'homepage')
+  await sleep(300)
+  const landed = await followLink(text, scope)
+  check(landed === expected, `homepage "${text}" (${scope}) → ${expected}${landed === expected ? '' : ` [got ${landed}]`}`)
+}
+await go('/')
+const anchor = await followLink('How booking works', 'header nav')
+await sleep(400)
+check(anchor === '/#how-it-works' && await js(`Math.abs(document.querySelector('#how-it-works').getBoundingClientRect().top) < 120`), 'header "How booking works" scrolls to the section')
+await go('/appointments/book')
+await waitFor(textOnPage('Sign in to book'), 'booking entry')
+check(await js(textOnPage('Sign in to book')), 'signed-out booking entry asks the visitor to sign in')
+await go('/')
+const faqOpens = await js(`(() => { const d = document.querySelector('main details'); d.querySelector('summary').click(); return d.open })()`)
+check(faqOpens, 'FAQ question expands')
+
+// Homepage on a phone: own header with Book + menu.
+await viewport(390)
+await go('/')
+await waitFor(`!!document.querySelector('[aria-controls=mobile-nav]')`, 'mobile menu toggle')
+await homepageChecks('mobile')
+check(await js(`[...document.querySelectorAll('header a')].some(a => a.textContent.trim() === 'Book' && a.offsetParent !== null)`), 'mobile header shows a Book button')
+await js(`document.querySelector('[aria-controls=mobile-nav]').click()`)
+await sleep(300)
+check(await js(`!!document.querySelector('#mobile-nav') && document.querySelector('[aria-controls=mobile-nav]').getAttribute('aria-expanded') === 'true'`), 'mobile menu opens (aria-expanded=true)')
+const mLanded = await followLink('Doctors', '#mobile-nav')
+check(mLanded === '/public/doctors' && !(await js(`!!document.querySelector('#mobile-nav')`)), 'mobile menu link navigates and the menu closes')
+await viewport(1280)
 
 // 1. Bootstrap an admin (emulator account + DB role, as create_admin.py would).
 const admin = await emuSignUp(`admin-${stamp}@example.com`, PASSWORD)
@@ -107,6 +175,18 @@ await go('/dashboard')
 await waitFor(textOnPage('Book appointment'), 'patient navigation')
 check(await js(textOnPage('My appointments')) && !(await js(textOnPage('Users & roles'))), 'patient sees patient navigation only')
 check(await js(textOnPage('Back to home')), 'sidebar shows "Back to home"')
+
+// Homepage while signed in as a patient.
+await go('/')
+await waitFor(textOnPage('Open MediTrack'), 'signed-in homepage')
+await homepageChecks('signed in')
+check(await js(`document.querySelector('header').innerText.includes('Open MediTrack') && !document.querySelector('header').innerText.includes('Sign in')`), 'signed-in header offers Open MediTrack, not Sign in')
+const signedBook = await followLink('Book an appointment', 'main')
+await waitFor(`location.pathname === '/patient/book-appointment'`, 'patient booking page')
+check((await path()) === '/patient/book-appointment', `homepage "Book an appointment" takes a patient straight to booking [${signedBook}]`)
+await go('/')
+const openApp = await followLink('Open MediTrack', 'main')
+check(openApp === '/dashboard', 'closing section "Open MediTrack" → /dashboard')
 
 // 4. Book without a patient file.
 await go('/patient/book-appointment')

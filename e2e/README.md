@@ -33,9 +33,9 @@ FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 node e2e/run.mjs
 
 Set `E2E_SHOTS=/some/dir` to save screenshots.
 
-## What it covers (31 checks)
+## What it covers (68 checks)
 
-Sign-up through the UI → *Awaiting access*; admin assigns the patient role; booking with no patient
+Homepage, signed out and signed in: every link and CTA lands on the right route, all photos load with alt text, one h1, no overflow, mobile header and menu. Sign-up through the UI → *Awaiting access*; admin assigns the patient role; booking with no patient
 file; the booking is listed and survives a reload; it is stored against the account UID; another
 patient gets `404`; patient-only navigation; **Back to home** from the desktop sidebar and the mobile
 drawer keeps the session and returning to the dashboard does not loop; sign-out lands on the home

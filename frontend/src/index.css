@@ -48,6 +48,17 @@
   --color-danger-600: #b23a2a;
   --color-danger-700: #932f22;
 
+  /* Public-site accents (used by the homepage; not used in the app) */
+  --color-cream-50: #fbf8f2;
+  --color-cream-100: #f4eee3;
+  --color-cream-200: #e9e0cf;
+  --color-mint-100: #dcefe5;
+  --color-mint-200: #c3e3d2;
+  --color-sage-300: #a9bda6;
+  --color-sage-600: #5f7a63;
+  --color-clay-400: #d98a62;
+  --color-clay-600: #b0603b;
+
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;

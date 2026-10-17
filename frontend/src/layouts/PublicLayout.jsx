@@ -27,43 +27,47 @@ function PublicNav() {
     <header className="sticky top-0 z-30 border-b border-ink-100 bg-paper/90 backdrop-blur-sm">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-8 px-4 sm:px-6">
         <Brand />
-        <nav aria-label="Primary" className="hidden items-center gap-6 md:flex">
+        <nav aria-label="Primary" className="hidden items-center gap-6 lg:flex">
           {LINKS.map((l) => (l.to.includes('#')
             ? <Link key={l.to} to={l.to} className={linkCls({ isActive: false })}>{l.label}</Link>
             : <NavLink key={l.to} to={l.to} className={linkCls} end>{l.label}</NavLink>))}
         </nav>
-        <div className="ml-auto hidden items-center gap-2 md:flex">
+        <div className="ml-auto hidden items-center gap-2 lg:flex">
           {status === 'loading' ? null : signedIn ? (
             <>
               <Button size="sm" variant="secondary" to="/dashboard">Open MediTrack</Button>
+              <Button size="sm" to="/appointments/book">Book appointment</Button>
               <AccountMenu />
             </>
           ) : (
             <>
               <Button size="sm" variant="ghost" to="/auth/sign-in">Sign in</Button>
-              <Button size="sm" to="/auth/sign-up">Create account</Button>
+              <Button size="sm" variant="secondary" to="/auth/sign-up">Create account</Button>
+              <Button size="sm" to="/appointments/book">Book appointment</Button>
             </>
           )}
         </div>
+        <span className="ml-auto lg:hidden"><Button size="sm" to="/appointments/book">Book</Button></span>
         <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-controls="mobile-nav"
-          aria-label={open ? 'Close menu' : 'Open menu'} className="-mr-1.5 ml-auto rounded-md p-1.5 text-ink-700 hover:bg-ink-100 md:hidden">
+          aria-label={open ? 'Close menu' : 'Open menu'} className="-mr-1.5 rounded-md p-1.5 text-ink-700 hover:bg-ink-100 lg:hidden">
           {open ? <RiCloseLine aria-hidden size={21} /> : <RiMenuLine aria-hidden size={21} />}
         </button>
       </div>
       {open && (
-        <div id="mobile-nav" className="border-t border-ink-100 bg-paper px-4 pb-4 pt-2 md:hidden">
+        <div id="mobile-nav" className="border-t border-ink-100 bg-paper px-4 pb-4 pt-2 lg:hidden">
           <nav aria-label="Primary" className="flex flex-col">
             {LINKS.map((l) => (
               <Link key={l.to} to={l.to} className="border-b border-ink-100 py-3 text-sm text-ink-800">{l.label}</Link>
             ))}
           </nav>
-          <div className="mt-4 flex gap-2">
+          <Button className="mt-4 w-full" size="lg" to="/appointments/book">Book an appointment</Button>
+          <div className="mt-2 flex gap-2">
             {signedIn ? (
-              <Button className="flex-1" to="/dashboard">Open MediTrack</Button>
+              <Button className="flex-1" variant="secondary" to="/dashboard">Open MediTrack</Button>
             ) : (
               <>
                 <Button className="flex-1" variant="secondary" to="/auth/sign-in">Sign in</Button>
-                <Button className="flex-1" to="/auth/sign-up">Create account</Button>
+                <Button className="flex-1" variant="secondary" to="/auth/sign-up">Create account</Button>
               </>
             )}
           </div>
