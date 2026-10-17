@@ -44,19 +44,8 @@ def get_medicine(db: Session, medicine_id: int) -> Medicine | None:
 def update_medicine(
     db: Session, medicine: Medicine, data: MedicineUpdate
 ) -> Medicine:
-    changes = data.model_dump(exclude_unset=True)
+    changes = data.changes()
 
-    if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide at least one field to update.",
-        )
-
-    if any(value is None for value in changes.values()):
-        raise HTTPException(
-            status_code=422,
-            detail="Medicine fields cannot be null.",
-        )
 
     for field, value in changes.items():
         setattr(medicine, field, value)

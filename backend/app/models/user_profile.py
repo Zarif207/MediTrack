@@ -20,7 +20,7 @@ Design notes:
 """
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -45,6 +45,13 @@ STAFF_ROLES = frozenset({"admin", "receptionist", "doctor", "pharmacist", "accou
 
 class UserProfile(Base):
     __tablename__ = "user_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('user', 'patient', 'admin', 'receptionist', "
+            "'doctor', 'pharmacist', 'accountant')",
+            name="ck_user_profiles_role",
+        ),
+    )
 
     firebase_uid: Mapped[str] = mapped_column(
         String(128),

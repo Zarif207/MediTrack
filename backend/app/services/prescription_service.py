@@ -3,12 +3,24 @@ from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
+from app.auth.ownership import owned_appointment_clause
+from app.models.appointment import Appointment
 from app.models.medical_record import MedicalRecord
 from app.models.prescription import Prescription
 from app.models.prescription_item import PrescriptionItem
+from app.models.user_profile import UserProfile
 from app.schemas.prescription import PrescriptionCreate, PrescriptionUpdate
+
+_RECORD_DETAILS = (
+    selectinload(Prescription.medical_record)
+    .selectinload(MedicalRecord.appointment)
+    .selectinload(Appointment.patient),
+    selectinload(Prescription.medical_record)
+    .selectinload(MedicalRecord.appointment)
+    .selectinload(Appointment.booker),
+)
 
 
 def create_prescription(
@@ -37,9 +49,25 @@ def create_prescription(
 
 
 def get_prescriptions(
-    db: Session, skip: int = 0, limit: int = 20, record_id: int | None = None
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    record_id: int | None = None,
+    owner: UserProfile | None = None,
 ) -> list[Prescription]:
-    statement = select(Prescription).order_by(Prescription.prescription_id)
+    """List prescriptions. When `owner` is given, only that patient's are returned."""
+    statement = (
+        select(Prescription)
+        .options(*_RECORD_DETAILS)
+        .order_by(Prescription.prescription_id)
+    )
+
+    if owner is not None:
+        statement = (
+            statement.join(MedicalRecord, Prescription.record_id == MedicalRecord.record_id)
+            .join(Appointment, MedicalRecord.appointment_id == Appointment.appointment_id)
+            .where(owned_appointment_clause(owner))
+        )
 
     if record_id is not None:
         statement = statement.where(Prescription.record_id == record_id)
@@ -56,13 +84,7 @@ def get_prescription(
 def update_prescription(
     db: Session, prescription: Prescription, data: PrescriptionUpdate
 ) -> Prescription:
-    changes = data.model_dump(exclude_unset=True)
-
-    if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide at least one field to update.",
-        )
+    changes = data.changes()
 
     for field, value in changes.items():
         setattr(prescription, field, value)

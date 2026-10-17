@@ -1,450 +1,273 @@
-import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router'
-import { motion } from 'framer-motion'
 import {
-  RiUserHeartLine, RiUserStarLine, RiCalendarCheckLine,
-  RiMoneyDollarCircleLine, RiAddCircleLine, RiArrowRightLine,
-  RiBuildingLine, RiMedicineBottleLine, RiFileList3Line,
-  RiCapsuleLine, RiCheckLine, RiTimeLine,
-  RiRefreshLine,
+  RiArrowRightLine, RiCalendarCheckLine, RiCalendarScheduleLine, RiTimeLine,
 } from 'react-icons/ri'
-import { appointmentsApi, patientsApi, doctorsApi, billsApi, medicalRecordsApi } from '../services/api'
 import { useAuth } from '../context/useAuth'
+import { ROLE_LABELS } from '../config/navigation'
+import {
+  appointmentsApi, billsApi, doctorsApi, medicalRecordsApi, medicinesApi,
+  patientsApi, prescriptionsApi,
+} from '../services/api'
+import { optional, useAsync } from '../hooks/useAsync'
+import Panel from '../components/ui/Panel'
+import Button from '../components/ui/Button'
 import StatusBadge from '../components/ui/StatusBadge'
-import { PageLoader } from '../components/ui/Spinner'
-import { ConnectionError } from '../components/ui/ErrorAlert'
-import { formatDate, formatTime, formatCurrency } from '../utils/format'
+import { EmptyState, ErrorState, LoadingState, Alert } from '../components/ui/States'
+import { AppointmentRow } from './patient/MyAppointments'
+import {
+  doctorName, formatCurrency, formatDate, formatTime, isUpcoming, plural, todayISO,
+} from '../utils/format'
 
-// ── Shared sub-components ─────────────────────────────────────────────────────
+function greeting() {
+  const h = new Date().getHours()
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
+}
 
-function StatCard({ icon: Icon, label, value, loading, color, to }) {
-  return (
-    <Link to={to} className="block group">
-      <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-all duration-200 group-hover:-translate-y-0.5">
-        <div className="flex items-start justify-between">
-          <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${color}`}>
-            <Icon size={20} className="text-white" />
-          </div>
-          <RiArrowRightLine size={16} className="text-gray-300 group-hover:text-gray-500 transition-colors mt-1" />
-        </div>
-        <div className="mt-4">
-          {loading
-            ? <div className="h-8 w-16 bg-gray-100 rounded animate-pulse" />
-            : <p className="text-3xl font-bold text-gray-900">{value ?? '—'}</p>}
-          <p className="text-sm text-gray-500 mt-1">{label}</p>
-        </div>
-      </div>
+function firstName(profile) {
+  return (profile?.display_name || profile?.email?.split('@')[0] || '').split(' ')[0]
+}
+
+function Figure({ label, value, to, note }) {
+  const body = (
+    <>
+      <p className="text-xs text-ink-500">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums tracking-[-0.01em]">{value}</p>
+      {note && <p className="mt-0.5 text-xs text-ink-500">{note}</p>}
+    </>
+  )
+  return to ? (
+    <Link to={to} className="block rounded-lg border border-ink-100 bg-surface px-4 py-3.5 transition-colors hover:border-ink-200">
+      {body}
     </Link>
+  ) : (
+    <div className="rounded-lg border border-ink-100 bg-surface px-4 py-3.5">{body}</div>
   )
 }
-
-function QuickAction({ icon: Icon, label, to, color }) {
-  return (
-    <Link to={to} className="flex items-center gap-3 p-4 bg-white border border-gray-200 rounded-xl hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${color}`}>
-        <Icon size={17} className="text-white" />
-      </div>
-      <span className="text-sm font-medium text-gray-700">{label}</span>
-      <RiArrowRightLine size={14} className="text-gray-300 ml-auto" />
-    </Link>
-  )
-}
-
-const stagger = {
-  container: { animate: { transition: { staggerChildren: 0.07 } } },
-  item: { initial: { opacity: 0, y: 16 }, animate: { opacity: 1, y: 0, transition: { duration: 0.25 } } },
-}
-
-// ── Main export ───────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { profile } = useAuth()
-  if (profile?.role === 'patient') return <PatientDashboard profile={profile} />
-  if (profile?.role === 'user' || !profile?.role) return <UserDashboard profile={profile} />
+  const { role } = useAuth()
+  if (role === 'patient') return <PatientDashboard />
+  if (role === 'user') return <AwaitingAccess />
   return <StaffDashboard />
 }
 
-/**
- * Dashboard for accounts with role='user' — no patient or staff permissions yet.
- * Shows onboarding info and available public actions.
- */
-function UserDashboard({ profile }) {
-  const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'there'
+// ── Awaiting a role ───────────────────────────────────────────────────────────
+
+function AwaitingAccess() {
+  const { profile } = useAuth()
   return (
-    <div className="space-y-6 max-w-2xl">
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-        <h2 className="text-2xl font-bold text-gray-900">Welcome to MediTrack, {displayName}!</h2>
-        <p className="text-gray-500 mt-1 text-sm">Your account has been created successfully.</p>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        className="bg-blue-50 border border-blue-200 rounded-2xl p-6"
-      >
-        <div className="flex items-start gap-4">
-          <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center shrink-0">
-            <RiTimeLine size={20} className="text-blue-600" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-blue-900">Account Setup in Progress</h3>
-            <p className="text-sm text-blue-800 mt-1 leading-relaxed">
-              Your account has been created with the default <strong>user</strong> role.
-              An administrator needs to assign you the appropriate role (patient, doctor, etc.)
-              before you can access clinical features.
-            </p>
-            <div className="mt-3 space-y-1.5">
-              {[
-                { done: true,  text: 'Account registered' },
-                { done: true,  text: 'Email verified' },
-                { done: false, text: 'Role assigned by administrator' },
-                { done: false, text: 'Access to features enabled' },
-              ].map(({ done, text }) => (
-                <div key={text} className="flex items-center gap-2 text-sm text-blue-700">
-                  {done
-                    ? <RiCheckLine size={15} className="text-green-500 shrink-0" />
-                    : <RiTimeLine size={15} className="text-blue-400 shrink-0" />}
-                  {text}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
-      >
-        <h3 className="font-semibold text-gray-800 mb-3">While you wait</h3>
-        <div className="grid sm:grid-cols-2 gap-3">
-          <Link to="/public/doctors" className="flex items-start gap-3 p-4 bg-white border border-gray-200 rounded-xl hover:shadow-md transition-all">
-            <div className="w-9 h-9 rounded-lg bg-blue-500 flex items-center justify-center shrink-0">
-              <RiUserStarLine size={17} className="text-white" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Find a Doctor</p>
-              <p className="text-xs text-gray-500 mt-0.5">Browse our specialist doctors</p>
-            </div>
-          </Link>
-          <Link to="/public/departments" className="flex items-start gap-3 p-4 bg-white border border-gray-200 rounded-xl hover:shadow-md transition-all">
-            <div className="w-9 h-9 rounded-lg bg-purple-500 flex items-center justify-center shrink-0">
-              <RiBuildingLine size={17} className="text-white" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Departments</p>
-              <p className="text-xs text-gray-500 mt-0.5">Explore medical departments</p>
-            </div>
-          </Link>
-        </div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3 }}
-        className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm"
-      >
-        <h3 className="font-semibold text-gray-800 mb-3">Your Account</h3>
-        <div className="space-y-2 text-sm">
-          {profile?.display_name && (
-            <div className="flex justify-between py-1 border-b border-gray-100">
-              <span className="text-gray-500">Name</span>
-              <span className="font-medium text-gray-800">{profile.display_name}</span>
-            </div>
-          )}
-          {profile?.email && (
-            <div className="flex justify-between py-1 border-b border-gray-100">
-              <span className="text-gray-500">Email</span>
-              <span className="font-medium text-gray-800">{profile.email}</span>
-            </div>
-          )}
-          <div className="flex justify-between py-1">
-            <span className="text-gray-500">Role</span>
-            <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full text-xs font-medium">User (default)</span>
-          </div>
-        </div>
-      </motion.div>
-    </div>
-  )
-}
-
-// ── Patient dashboard ─────────────────────────────────────────────────────────
-
-/**
- * Unified patient dashboard — works whether or not a patient record exists.
- * Booking is always available. Health data (records, bills) shows empty lists
- * until a patient record is created by staff, which happens automatically on
- * first booking.
- */
-function PatientDashboard({ profile }) {
-  const [appts, setAppts]     = useState([])
-  const [bills, setBills]     = useState([])
-  const [records, setRecords] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(null)
-
-  const load = useCallback(async () => {
-    try {
-      setLoading(true); setError(null)
-      const [a, b, r] = await Promise.all([
-        appointmentsApi.list({ limit: 5 }),
-        billsApi.list({ limit: 5 }),
-        medicalRecordsApi.list({ limit: 5 }),
-      ])
-      setAppts(a); setBills(b); setRecords(r)
-    } catch (e) {
-      if (e.message?.includes('fetch') || e.message?.includes('Cannot reach')) {
-        setError('connection')
-      } else {
-        setError(e.message)
-      }
-    } finally {
-      setLoading(false) }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const displayName = profile?.display_name || profile?.email?.split('@')[0] || 'Patient'
-
-  if (loading) return <PageLoader />
-  if (error === 'connection') return <ConnectionError />
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Welcome back, {displayName}</h2>
-          <p className="text-gray-500 mt-1 text-sm">Here is your personal health overview.</p>
-        </div>
-        <Link
-          to="/patient/book-appointment"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium transition-colors shadow-sm shrink-0"
-        >
-          <RiCalendarCheckLine size={15} />
-          Book Appointment
-        </Link>
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
-          <span>{error}</span>
-          <button onClick={load} className="ml-auto flex items-center gap-1 text-xs font-medium hover:underline">
-            <RiRefreshLine size={13} /> Retry
-          </button>
-        </div>
-      )}
-
-      {/* Stat cards */}
-      <motion.div variants={stagger.container} initial="initial" animate="animate" className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="max-w-2xl">
+      <p className="eyebrow">Account created</p>
+      <h1 className="mt-1 text-xl font-semibold sm:text-[22px]">Welcome{firstName(profile) ? `, ${firstName(profile)}` : ''}</h1>
+      <p className="mt-2 text-sm leading-relaxed text-ink-600">
+        Your account is ready, but it has not been given access yet. A MediTrack administrator assigns each
+        account a role — patient, or a staff role — before clinical features are available.
+      </p>
+      <Panel className="mt-6" bodyClassName="divide-y divide-ink-100">
         {[
-          { icon: RiCalendarCheckLine, label: 'My Appointments', value: appts.length, color: 'bg-indigo-500', to: '/appointments' },
-          { icon: RiMoneyDollarCircleLine, label: 'My Bills', value: bills.length, color: 'bg-amber-500', to: '/bills' },
-          { icon: RiFileList3Line, label: 'Medical Records', value: records.length, color: 'bg-teal-500', to: '/medical-records' },
-        ].map((card) => (
-          <motion.div key={card.label} variants={stagger.item}>
-            <StatCard {...card} loading={loading} />
-          </motion.div>
+          ['Signed in', profile?.email, true],
+          ['Role assigned by an administrator', 'Pending', false],
+        ].map(([label, value, done]) => (
+          <div key={label} className="flex items-center justify-between gap-4 px-4 py-3 text-sm sm:px-5">
+            <span className="flex items-center gap-2.5">
+              <span className={`h-2 w-2 rounded-full ${done ? 'bg-pine-500' : 'bg-ink-300'}`} aria-hidden />
+              {label}
+            </span>
+            <span className="truncate text-ink-500">{value}</span>
+          </div>
         ))}
-      </motion.div>
-
-      {/* Recent appointments */}
-      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <h3 className="font-semibold text-gray-800">Recent Appointments</h3>
-          <Link to="/appointments" className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1">
-            View all <RiArrowRightLine size={13} />
-          </Link>
-        </div>
-        {appts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-            <RiCalendarCheckLine size={28} className="mb-2" />
-            <p className="text-sm mb-3">No appointments yet</p>
-            <Link to="/patient/book-appointment" className="text-xs text-teal-600 hover:underline font-medium">
-              Book your first appointment →
-            </Link>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date & Time</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reason</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {appts.map((a) => (
-                  <tr key={a.appointment_id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-3">
-                      <p className="text-gray-800">{formatDate(a.appointment_date)}</p>
-                      <p className="text-xs text-gray-400">{formatTime(a.appointment_time)}</p>
-                    </td>
-                    <td className="px-5 py-3"><StatusBadge value={a.status} /></td>
-                    <td className="px-5 py-3 text-gray-500 max-w-[200px] truncate">{a.reason ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Recent bills */}
-      {bills.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-800">Recent Bills</h3>
-            <Link to="/bills" className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1">
-              View all <RiArrowRightLine size={13} />
-            </Link>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bill</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                  <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {bills.map((b) => (
-                  <tr key={b.bill_id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-3 font-mono text-xs text-gray-400">#{b.bill_id}</td>
-                    <td className="px-5 py-3 font-semibold text-gray-900">{formatCurrency(b.amount)}</td>
-                    <td className="px-5 py-3"><StatusBadge type="payment" value={b.payment_status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Quick links */}
-      <div className="grid sm:grid-cols-3 gap-3">
-        <QuickAction icon={RiCalendarCheckLine} label="My Appointments" to="/appointments" color="bg-indigo-500" />
-        <QuickAction icon={RiCapsuleLine} label="My Prescriptions" to="/prescriptions" color="bg-purple-500" />
-        <QuickAction icon={RiMoneyDollarCircleLine} label="My Bills" to="/bills" color="bg-amber-500" />
-      </div>
+      </Panel>
+      <p className="mt-6 text-sm text-ink-600">
+        Meanwhile you can browse <Link className="link" to="/public/doctors">our doctors</Link> and{' '}
+        <Link className="link" to="/public/departments">departments</Link>.
+      </p>
     </div>
   )
 }
 
-// ── Staff dashboard ───────────────────────────────────────────────────────────
+// ── Patient ───────────────────────────────────────────────────────────────────
+
+function PatientDashboard() {
+  const { profile } = useAuth()
+  const { data, loading, error, reload } = useAsync(() => Promise.all([
+    appointmentsApi.listAll(),
+    optional(doctorsApi.listAll()),
+    medicalRecordsApi.listAll(),
+    prescriptionsApi.listAll(),
+    billsApi.listAll(),
+  ]), [])
+  const [appts, doctors, records, prescriptions, bills] = data ?? [[], [], [], [], []]
+  const doctorById = Object.fromEntries(doctors.map((d) => [d.doctor_id, d]))
+
+  const upcoming = appts
+    .filter((a) => ['scheduled', 'confirmed'].includes(a.status) && isUpcoming(a))
+    .sort((a, b) => `${a.appointment_date}${a.appointment_time}`.localeCompare(`${b.appointment_date}${b.appointment_time}`))
+  const outstanding = bills.filter((b) => b.payment_status === 'pending')
+  const latestRecord = [...records].sort((a, b) => b.record_date.localeCompare(a.record_date))[0]
+
+  return (
+    <>
+      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="eyebrow">{formatDate(todayISO(), { weekday: 'long' })}</p>
+          <h1 className="mt-1 text-xl font-semibold sm:text-[22px]">
+            {greeting()}{firstName(profile) ? `, ${firstName(profile)}` : ''}
+          </h1>
+        </div>
+        <Button size="lg" icon={RiCalendarScheduleLine} to="/patient/book-appointment">Book an appointment</Button>
+      </div>
+
+      {loading ? <Panel><LoadingState /></Panel> : error ? (
+        <Panel><ErrorState error={error} onRetry={reload} /></Panel>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_17rem]">
+          <div className="space-y-6">
+            <Panel title="Upcoming appointments"
+              actions={upcoming.length > 0 && <Link to="/appointments" className="link text-[13px]">All appointments</Link>}>
+              {upcoming.length ? (
+                <ul className="divide-y divide-ink-100">
+                  {upcoming.slice(0, 3).map((a) => <AppointmentRow key={a.appointment_id} appt={a} doctor={doctorById[a.doctor_id]} />)}
+                </ul>
+              ) : (
+                <EmptyState icon={RiCalendarCheckLine} title="Nothing booked"
+                  description="Choose a doctor and an open time — it takes about a minute."
+                  action={<Button size="sm" to="/patient/book-appointment">Book appointment</Button>} />
+              )}
+            </Panel>
+
+            {latestRecord && (
+              <Panel title="Latest visit record" description={formatDate(latestRecord.record_date)}
+                actions={<Link to="/medical-records" className="link text-[13px]">All records</Link>}
+                bodyClassName="px-4 py-3.5 sm:px-5">
+                <p className="text-sm text-ink-800">{latestRecord.diagnosis || 'No diagnosis recorded.'}</p>
+              </Panel>
+            )}
+          </div>
+
+          <aside className="space-y-3">
+            <Figure label="Upcoming visits" value={upcoming.length} to="/appointments" />
+            <Figure label="Prescriptions" value={prescriptions.length} to="/prescriptions" />
+            <Figure label="Outstanding bills" value={outstanding.length}
+              note={outstanding.length ? formatCurrency(outstanding.reduce((s, b) => s + Number.parseFloat(b.amount), 0)) : null}
+              to="/bills" />
+            {profile?.patient_id == null && (
+              <Alert tone="info">
+                Visit records, prescriptions and bills appear once the clinic links your account to your patient file.
+                Booking works now.
+              </Alert>
+            )}
+          </aside>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── Staff ─────────────────────────────────────────────────────────────────────
 
 function StaffDashboard() {
-  const [stats, setStats] = useState({ patients: null, doctors: null, appointments: null, pending: null })
-  const [recentAppts, setRecentAppts] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const { profile, role, can } = useAuth()
+  const today = todayISO()
 
-  useEffect(() => {
-    async function load() {
-      try {
-        setLoading(true)
-        const [recentApptData, allPts, allDrs, allBills] = await Promise.all([
-          appointmentsApi.list({ limit: 8 }),
-          patientsApi.list({ limit: 100 }),
-          doctorsApi.list({ limit: 100 }),
-          billsApi.list({ payment_status: 'pending', limit: 100 }),
-        ])
-        setStats({
-          patients: allPts.length,
-          doctors: allDrs.length,
-          appointments: recentApptData.length,
-          pending: allBills.length,
-        })
-        setRecentAppts(recentApptData)
-      } catch (e) {
-        setError(e.message)
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [])
+  const { data, loading, error, reload } = useAsync(async () => {
+    const [appts, doctors, patients, pendingBills, medicines, prescriptions] = await Promise.all([
+      can('appointments:read') ? appointmentsApi.listAll() : null,
+      optional(doctorsApi.listAll()),
+      can('patients:read') ? patientsApi.listAll() : null,
+      can('bills:read') ? billsApi.listAll({ payment_status: 'pending' }) : null,
+      can('medicines:read') ? medicinesApi.listAll() : null,
+      can('prescriptions:read') ? prescriptionsApi.listAll() : null,
+    ])
+    return { appts, doctors, patients, pendingBills, medicines, prescriptions }
+  }, [role])
 
-  if (loading) return <PageLoader />
-  if (error?.includes('fetch') || error?.includes('Cannot reach')) return <ConnectionError />
+  const d = data ?? {}
+  const doctorById = Object.fromEntries((d.doctors ?? []).map((x) => [x.doctor_id, x]))
+  const todays = (d.appts ?? [])
+    .filter((a) => a.appointment_date === today)
+    .sort((a, b) => a.appointment_time.localeCompare(b.appointment_time))
+  const awaitingRecord = (d.appts ?? []).filter((a) => a.patient_id == null && ['scheduled', 'confirmed'].includes(a.status))
+  const lowStock = (d.medicines ?? []).filter((m) => m.stock_quantity <= 10)
+
+  const figures = [
+    d.appts && { label: 'Appointments today', value: todays.length, to: '/appointments' },
+    d.appts && can('appointments:write') && {
+      label: 'Bookings without a patient file', value: awaitingRecord.length, to: '/appointments',
+      note: awaitingRecord.length ? 'Link them before adding records or bills' : null,
+    },
+    d.patients && { label: 'Patients on file', value: d.patients.length, to: '/patients' },
+    d.pendingBills && {
+      label: 'Pending bills', value: d.pendingBills.length, to: '/bills',
+      note: d.pendingBills.length ? formatCurrency(d.pendingBills.reduce((s, b) => s + Number.parseFloat(b.amount), 0)) : null,
+    },
+    d.medicines && { label: 'Medicines at or below 10 units', value: lowStock.length, to: '/medicines' },
+    d.prescriptions && !d.appts && { label: 'Prescriptions on file', value: d.prescriptions.length, to: '/prescriptions' },
+  ].filter(Boolean)
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900">Welcome back</h2>
-        <p className="text-gray-500 mt-1 text-sm">Here's an overview of MediTrack hospital operations.</p>
+    <>
+      <div className="mb-8">
+        <p className="eyebrow">{formatDate(today, { weekday: 'long' })} · {ROLE_LABELS[role]}</p>
+        <h1 className="mt-1 text-xl font-semibold sm:text-[22px]">
+          {greeting()}{firstName(profile) ? `, ${firstName(profile)}` : ''}
+        </h1>
       </div>
 
-      <motion.div variants={stagger.container} initial="initial" animate="animate" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { icon: RiUserHeartLine, label: 'Total Patients', value: stats.patients, color: 'bg-blue-500', to: '/patients' },
-          { icon: RiUserStarLine, label: 'Total Doctors', value: stats.doctors, color: 'bg-teal-500', to: '/doctors' },
-          { icon: RiCalendarCheckLine, label: 'Recent Appts', value: stats.appointments, color: 'bg-indigo-500', to: '/appointments' },
-          { icon: RiMoneyDollarCircleLine, label: 'Pending Bills', value: stats.pending, color: 'bg-amber-500', to: '/bills' },
-        ].map((card) => (
-          <motion.div key={card.label} variants={stagger.item}>
-            <StatCard {...card} loading={loading} />
-          </motion.div>
-        ))}
-      </motion.div>
-
-      <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-800">Recent Appointments</h3>
-            <Link to="/appointments" className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1">
-              View all <RiArrowRightLine size={13} />
-            </Link>
-          </div>
-          {recentAppts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-              <RiCalendarCheckLine size={32} className="mb-2" />
-              <p className="text-sm">No appointments yet</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
-                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reason</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {recentAppts.map((appt) => (
-                    <tr key={appt.appointment_id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-5 py-3 text-gray-500 font-mono text-xs">#{appt.appointment_id}</td>
-                      <td className="px-5 py-3 text-gray-700">{formatDate(appt.appointment_date)}</td>
-                      <td className="px-5 py-3 text-gray-600">{formatTime(appt.appointment_time)}</td>
-                      <td className="px-5 py-3"><StatusBadge value={appt.status} /></td>
-                      <td className="px-5 py-3 text-gray-500 max-w-[160px] truncate">{appt.reason ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {loading ? <Panel><LoadingState /></Panel> : error ? (
+        <Panel><ErrorState error={error} onRetry={reload} /></Panel>
+      ) : (
+        <div className="space-y-6">
+          {figures.length > 0 && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {figures.map((f) => <Figure key={f.label} {...f} />)}
             </div>
           )}
-        </div>
 
-        <div className="space-y-4">
-          <h3 className="font-semibold text-gray-800">Quick Actions</h3>
-          <div className="space-y-2">
-            <QuickAction icon={RiAddCircleLine} label="Add New Patient" to="/patients" color="bg-blue-500" />
-            <QuickAction icon={RiUserStarLine} label="Add New Doctor" to="/doctors" color="bg-teal-500" />
-            <QuickAction icon={RiCalendarCheckLine} label="Schedule Appointment" to="/appointments" color="bg-indigo-500" />
-            <QuickAction icon={RiBuildingLine} label="Manage Departments" to="/departments" color="bg-purple-500" />
-            <QuickAction icon={RiMedicineBottleLine} label="Medicine Inventory" to="/medicines" color="bg-green-500" />
-            <QuickAction icon={RiMoneyDollarCircleLine} label="Manage Bills" to="/bills" color="bg-amber-500" />
-          </div>
+          {d.appts && (
+            <Panel title="Today's schedule" description={plural(todays.length, 'appointment')}
+              actions={<Link to="/appointments" className="link text-[13px]">Open schedule</Link>}>
+              {todays.length ? (
+                <ul className="divide-y divide-ink-100">
+                  {todays.map((a) => (
+                    <li key={a.appointment_id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 sm:px-5">
+                      <span className="flex w-20 items-center gap-1.5 text-sm font-medium tabular-nums">
+                        <RiTimeLine aria-hidden size={14} className="text-ink-400" />{formatTime(a.appointment_time)}
+                      </span>
+                      <span className="min-w-0 flex-1 text-sm">
+                        {a.patient_name ?? 'Unnamed booking'}
+                        <span className="text-ink-500"> with {doctorById[a.doctor_id] ? doctorName(doctorById[a.doctor_id]) : `doctor #${a.doctor_id}`}</span>
+                      </span>
+                      <StatusBadge value={a.status} />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState compact icon={RiCalendarCheckLine} title="No appointments today" />
+              )}
+            </Panel>
+          )}
+
+          {lowStock.length > 0 && (
+            <Panel title="Low stock" actions={<Link to="/medicines" className="link text-[13px]">Inventory</Link>}>
+              <ul className="divide-y divide-ink-100">
+                {lowStock.slice(0, 6).map((m) => (
+                  <li key={m.medicine_id} className="flex items-center justify-between px-4 py-2.5 text-sm sm:px-5">
+                    <span>{m.medicine_name} <span className="text-ink-500">{m.strength}</span></span>
+                    <span className="tabular-nums text-warn-700">{plural(m.stock_quantity, 'unit')}</span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
+
+          {!d.appts && !d.medicines && !d.pendingBills && (
+            <Panel bodyClassName="flex items-center justify-between gap-4 px-5 py-4">
+              <p className="text-sm text-ink-600">Use the navigation to open the sections your role can access.</p>
+              <RiArrowRightLine aria-hidden className="text-ink-300" />
+            </Panel>
+          )}
         </div>
-      </div>
-    </div>
+      )}
+    </>
   )
 }

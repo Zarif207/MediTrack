@@ -1,21 +1,19 @@
 /**
- * AuthContext — provides Firebase authentication state + UserProfile role
- * throughout the React tree.
+ * AuthContext — Firebase sign-in state plus the server-side MediTrack profile.
  *
- * Context value shape:
- *   {
- *     user:        FirebaseUser | null,  // Firebase auth user
- *     profile:     UserProfile | null,   // { role, display_name, email } from PostgreSQL
- *     loading:     boolean,              // true while auth state is being resolved
- *     configured:  boolean,              // false if VITE_FIREBASE_* env vars are missing
- *     signIn:      (email, password) => Promise<void>,
- *     signUp:      (email, password, displayName?) => Promise<void>,
- *     signOut:     () => Promise<void>,
- *     sendPasswordReset: (email) => Promise<void>,
- *     getIdToken:  () => Promise<string | null>,  // fresh Firebase ID token
- *   }
+ * The profile (role, permissions, linked patient record) always comes from the
+ * backend. If it cannot be loaded, `profile` stays null and `profileError` is
+ * set; the UI never guesses a role.
+ *
+ * Context value:
+ *   user          FirebaseUser | null
+ *   profile       { firebase_uid, role, permissions[], display_name, email, patient_id } | null
+ *   status        'loading' | 'signed-out' | 'ready' | 'error'
+ *   profileError  ApiError | null
+ *   can(perm)     true if the profile holds the permission
+ *   signIn, signUp, signOut, sendPasswordReset, refreshProfile, updateDisplayName
  */
-import { useEffect, useState, useCallback } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -25,145 +23,107 @@ import {
   updateProfile,
 } from 'firebase/auth'
 import { auth, isFirebaseConfigured } from '../services/firebase'
+import { authApi, SESSION_EXPIRED_EVENT } from '../services/api'
 import { AuthContext } from './useAuth'
 
-const BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'
-const REGISTER_URL = `${BASE}/auth/register`
-const ME_URL       = `${BASE}/auth/me`
-
-/** Sync the PostgreSQL UserProfile after Firebase sign-in */
-async function syncProfile(firebaseUser) {
-  if (!firebaseUser) return null
-  const token = await firebaseUser.getIdToken()
-
-  // Try GET /auth/me first (profile already exists)
-  try {
-    const res = await fetch(ME_URL, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (res.ok) return await res.json()
-  } catch {
-    // Backend not running — return minimal stub so UI still renders
-    return {
-      firebase_uid: firebaseUser.uid,
-      role: 'patient',
-      display_name: firebaseUser.displayName,
-      email: firebaseUser.email,
-    }
-  }
-
-  // Profile not found — create it (first sign-in)
-  try {
-    const res = await fetch(REGISTER_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        firebase_uid: firebaseUser.uid,
-        display_name: firebaseUser.displayName,
-        email: firebaseUser.email,
-      }),
-    })
-    if (res.ok) return await res.json()
-  } catch {
-    // Backend not running
-  }
-
-  return {
-    firebase_uid: firebaseUser.uid,
-    role: 'patient',
-    display_name: firebaseUser.displayName,
-    email: firebaseUser.email,
-  }
-}
-
 export function AuthProvider({ children }) {
-  const [user, setUser]       = useState(null)
+  const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [status, setStatus] = useState(isFirebaseConfigured ? 'loading' : 'signed-out')
+  const [profileError, setProfileError] = useState(null)
+  const [sessionExpired, setSessionExpired] = useState(false)
+  // Display name chosen at sign-up, sent with the first /auth/register call.
+  const pendingName = useRef(null)
 
-  useEffect(() => {
-    if (!isFirebaseConfigured || !auth) {
-      setLoading(false)
-      return
-    }
-
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser)
-      if (firebaseUser) {
-        const p = await syncProfile(firebaseUser)
-        setProfile(p)
-      } else {
-        setProfile(null)
-      }
-      setLoading(false)
-    })
-
-    return unsubscribe
-  }, [])
-
-  const getIdToken = useCallback(async () => {
-    if (!user) return null
+  const loadProfile = useCallback(async () => {
+    setProfileError(null)
     try {
-      return await user.getIdToken(false)
-    } catch {
+      const p = await authApi.register(pendingName.current)
+      pendingName.current = null
+      setProfile(p)
+      setStatus('ready')
+      return p
+    } catch (err) {
+      setProfile(null)
+      setProfileError(err)
+      setStatus('error')
       return null
     }
-  }, [user])
+  }, [])
 
-  /** Force-refresh the profile from the backend (call after admin links patient) */
-  const refreshProfile = useCallback(async () => {
-    if (!user) return
-    try {
-      const token = await user.getIdToken(true) // force refresh Firebase token too
-      const res = await fetch(`${BASE}/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        const p = await res.json()
-        setProfile(p)
+  useEffect(() => {
+    if (!isFirebaseConfigured || !auth) return undefined
+    return onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser)
+      if (firebaseUser) {
+        setStatus('loading')
+        setSessionExpired(false)
+        await loadProfile()
+      } else {
+        setProfile(null)
+        setProfileError(null)
+        setStatus('signed-out')
       }
-    } catch {
-      // Backend unreachable — ignore
+    })
+  }, [loadProfile])
+
+  useEffect(() => {
+    const onExpired = () => {
+      setSessionExpired(true)
+      if (auth) firebaseSignOut(auth)
     }
-  }, [user])
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired)
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired)
+  }, [])
 
   const signIn = useCallback(async (email, password) => {
-    if (!auth) throw new Error('Firebase is not configured. Add VITE_FIREBASE_* variables to frontend/.env')
+    if (!auth) throw new Error('Sign-in is not configured for this installation.')
     await signInWithEmailAndPassword(auth, email, password)
   }, [])
 
   const signUp = useCallback(async (email, password, displayName) => {
-    if (!auth) throw new Error('Firebase is not configured.')
+    if (!auth) throw new Error('Sign-up is not configured for this installation.')
+    pendingName.current = displayName || null
     const cred = await createUserWithEmailAndPassword(auth, email, password)
     if (displayName) await updateProfile(cred.user, { displayName })
-    const p = await syncProfile(cred.user)
-    setProfile(p)
   }, [])
 
-  const signOutFn = useCallback(async () => {
-    if (!auth) return
-    await firebaseSignOut(auth)
-    setUser(null)
-    setProfile(null)
+  const signOut = useCallback(async () => {
+    if (auth) await firebaseSignOut(auth)
   }, [])
 
   const sendPasswordReset = useCallback(async (email) => {
-    if (!auth) throw new Error('Firebase is not configured.')
+    if (!auth) throw new Error('Password reset is not configured for this installation.')
     await sendPasswordResetEmail(auth, email)
   }, [])
 
-  const value = {
-    user,
-    profile,
-    loading,
-    configured: isFirebaseConfigured,
-    signIn,
-    signUp,
-    signOut: signOutFn,
-    sendPasswordReset,
-    getIdToken,
-    refreshProfile,
-  }
+  const updateDisplayName = useCallback(async (displayName) => {
+    const p = await authApi.updateMe({ display_name: displayName })
+    setProfile(p)
+    return p
+  }, [])
+
+  const value = useMemo(() => {
+    const permissions = new Set(profile?.permissions ?? [])
+    return {
+      user,
+      profile,
+      role: profile?.role ?? null,
+      status,
+      loading: status === 'loading',
+      profileError,
+      sessionExpired,
+      configured: isFirebaseConfigured,
+      can: (perm) => permissions.has(perm),
+      signIn,
+      signUp,
+      signOut,
+      sendPasswordReset,
+      refreshProfile: loadProfile,
+      updateDisplayName,
+    }
+  }, [user, profile, status, profileError, sessionExpired, signIn, signUp, signOut,
+    sendPasswordReset, loadProfile, updateDisplayName])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

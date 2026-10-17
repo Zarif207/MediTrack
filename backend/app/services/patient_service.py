@@ -49,13 +49,7 @@ def update_patient(
     patient: Patient,
     data: PatientUpdate,
 ) -> Patient:
-    changes = data.model_dump(exclude_unset=True)
-
-    if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide at least one field to update.",
-        )
+    changes = data.changes()
 
     for field, value in changes.items():
         setattr(patient, field, value)

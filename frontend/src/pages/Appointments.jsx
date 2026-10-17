@@ -1,273 +1,298 @@
-import { useState, useEffect, useCallback } from 'react'
-import { appointmentsApi, patientsApi, doctorsApi } from '../services/api'
-import Button from '../components/ui/Button'
+/**
+ * Staff appointment schedule. Read: appointments:read. Edit: appointments:write.
+ * Bookings made by patient accounts that are not yet linked to a patient file
+ * show "No patient file"; staff with write access can attach one here.
+ */
+import { useMemo, useState } from 'react'
+import { RiAddLine, RiCalendarCheckLine, RiDeleteBinLine, RiPencilLine } from 'react-icons/ri'
+import { appointmentsApi, doctorsApi, patientsApi } from '../services/api'
+import { optional, useAsync } from '../hooks/useAsync'
+import { blankToNull, useForm } from '../hooks/useForm'
+import { useAuth } from '../context/useAuth'
+import { useToast } from '../components/ui/useToast'
+import PageHeader from '../components/ui/PageHeader'
+import Panel from '../components/ui/Panel'
+import Button, { IconButton } from '../components/ui/Button'
+import DataTable from '../components/ui/DataTable'
+import StatusBadge, { Badge } from '../components/ui/StatusBadge'
+import SearchInput from '../components/ui/SearchInput'
+import Toolbar, { FilterSelect } from '../components/ui/Toolbar'
+import FormModal from '../components/ui/FormModal'
 import Modal from '../components/ui/Modal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
-import Input from '../components/ui/Input'
-import Select from '../components/ui/Select'
-import StatusBadge from '../components/ui/StatusBadge'
-import { PageLoader } from '../components/ui/Spinner'
-import EmptyState from '../components/ui/EmptyState'
-import ErrorAlert from '../components/ui/ErrorAlert'
-import { formatDate, formatTime, formatDateTime } from '../utils/format'
-import {
-  RiCalendarCheckLine, RiAddLine, RiSearchLine, RiEditLine,
-  RiDeleteBinLine, RiEyeLine, RiCloseLine, RiFilterLine,
-} from 'react-icons/ri'
+import DetailList from '../components/ui/DetailList'
+import { FieldGrid, Input, Select, Textarea } from '../components/ui/Field'
+import { EmptyState } from '../components/ui/States'
+import { doctorName, formatDate, formatDateTime, formatTime, fullName, plural, todayISO } from '../utils/format'
 
-const STATUSES = ['scheduled', 'confirmed', 'completed', 'cancelled', 'no_show']
-const EMPTY_FORM = {
-  patient_id: '', doctor_id: '', appointment_date: '',
-  appointment_time: '', status: 'scheduled', reason: '',
+const STATUS_LABELS = {
+  scheduled: 'Scheduled', confirmed: 'Confirmed', completed: 'Completed', cancelled: 'Cancelled', no_show: 'No-show',
 }
+// Mirrors ALLOWED_TRANSITIONS in backend/app/services/appointment_service.py
+const TRANSITIONS = {
+  scheduled: ['scheduled', 'confirmed', 'completed', 'cancelled', 'no_show'],
+  confirmed: ['confirmed', 'scheduled', 'completed', 'cancelled', 'no_show'],
+  completed: ['completed'],
+  cancelled: ['cancelled'],
+  no_show: ['no_show'],
+}
+const FINAL = ['completed', 'cancelled', 'no_show']
+const EMPTY = { patient_id: '', doctor_id: '', appointment_date: '', appointment_time: '', status: 'scheduled', reason: '' }
 
-function AppointmentForm({ initial, onSubmit, onCancel, loading, error, patients, doctors }) {
-  const [form, setForm] = useState(initial ?? EMPTY_FORM)
-  const [errors, setErrors] = useState({})
-  const set = (k, v) => { setForm((f) => ({ ...f, [k]: v })); setErrors((e) => ({ ...e, [k]: '' })) }
-
-  function validate() {
-    const e = {}
-    if (!form.patient_id) e.patient_id = 'Patient is required'
-    if (!form.doctor_id) e.doctor_id = 'Doctor is required'
-    if (!form.appointment_date) e.appointment_date = 'Date is required'
-    if (!form.appointment_time) e.appointment_time = 'Time is required'
-    setErrors(e); return !Object.keys(e).length
-  }
-
-  function handleSubmit(ev) {
-    ev.preventDefault()
-    if (!validate()) return
-    onSubmit({
-      patient_id: Number(form.patient_id),
-      doctor_id: Number(form.doctor_id),
-      appointment_date: form.appointment_date,
-      appointment_time: form.appointment_time + ':00',
-      status: form.status,
-      reason: form.reason || null,
-    })
-  }
-
+function PatientCell({ appt }) {
+  if (appt.patient_id != null) return <span className="font-medium text-ink-900">{appt.patient_name ?? `Patient #${appt.patient_id}`}</span>
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {error && <ErrorAlert message={error} />}
-      <div className="grid sm:grid-cols-2 gap-4">
-        <Select label="Patient" required value={form.patient_id} onChange={(e) => set('patient_id', e.target.value)} error={errors.patient_id}>
-          <option value="">Select patient…</option>
-          {patients.map((p) => <option key={p.patient_id} value={p.patient_id}>{p.first_name} {p.last_name}</option>)}
-        </Select>
-        <Select label="Doctor" required value={form.doctor_id} onChange={(e) => set('doctor_id', e.target.value)} error={errors.doctor_id}>
-          <option value="">Select doctor…</option>
-          {doctors.map((d) => <option key={d.doctor_id} value={d.doctor_id}>Dr. {d.first_name} {d.last_name}</option>)}
-        </Select>
-        <Input label="Date" type="date" required value={form.appointment_date} onChange={(e) => set('appointment_date', e.target.value)} error={errors.appointment_date} />
-        <Input label="Time" type="time" required value={form.appointment_time} onChange={(e) => set('appointment_time', e.target.value)} error={errors.appointment_time} />
-        <Select label="Status" value={form.status} onChange={(e) => set('status', e.target.value)}>
-          {STATUSES.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-        </Select>
-      </div>
-      <Input label="Reason" type="textarea" value={form.reason ?? ''} onChange={(e) => set('reason', e.target.value)} placeholder="Reason for appointment…" />
-      <div className="flex justify-end gap-2 pt-2">
-        <Button variant="outline" type="button" onClick={onCancel} disabled={loading}>Cancel</Button>
-        <Button type="submit" loading={loading}>Save Appointment</Button>
-      </div>
-    </form>
+    <span className="flex flex-col gap-0.5">
+      <span className="font-medium text-ink-900">{appt.patient_name ?? 'Patient account'}</span>
+      <span><Badge tone="warn">No patient file</Badge></span>
+    </span>
   )
 }
 
-function AppointmentDetail({ appt, patientMap, doctorMap, onEdit, onClose }) {
-  const row = (label, val) => (
-    <div key={label} className="flex flex-col sm:flex-row gap-1 py-2.5 border-b border-gray-100 last:border-0">
-      <span className="text-xs font-medium text-gray-500 sm:w-36 shrink-0">{label}</span>
-      <span className="text-sm text-gray-800">{val ?? '—'}</span>
-    </div>
-  )
+function AppointmentForm({ form, patients, doctors, editing }) {
+  const status = editing?.status ?? 'scheduled'
+  const locked = editing && FINAL.includes(editing.status)
+  const allowedStatuses = editing ? TRANSITIONS[status] : ['scheduled', 'confirmed']
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3 p-4 bg-indigo-50 rounded-xl">
-        <div className="w-10 h-10 rounded-xl bg-indigo-200 flex items-center justify-center text-indigo-700">
-          <RiCalendarCheckLine size={18} />
-        </div>
-        <div>
-          <p className="font-bold text-gray-900">Appointment #{appt.appointment_id}</p>
-          <StatusBadge value={appt.status} />
-        </div>
-      </div>
-      <div>
-        {row('Patient', patientMap[appt.patient_id] ?? `#${appt.patient_id}`)}
-        {row('Doctor', doctorMap[appt.doctor_id] ?? `#${appt.doctor_id}`)}
-        {row('Date', formatDate(appt.appointment_date))}
-        {row('Time', formatTime(appt.appointment_time))}
-        {row('Reason', appt.reason)}
-        {row('Created', formatDateTime(appt.created_at))}
-      </div>
-      <div className="flex justify-end gap-2 pt-2">
-        <Button variant="outline" onClick={onClose} icon={<RiCloseLine size={15} />}>Close</Button>
-        <Button onClick={onEdit} icon={<RiEditLine size={15} />}>Edit</Button>
-      </div>
-    </div>
+    <>
+      {locked && (
+        <p className="rounded-md bg-ink-50 px-3 py-2.5 text-[13px] text-ink-600">
+          This appointment is {STATUS_LABELS[status].toLowerCase()}; only the reason can be changed.
+        </p>
+      )}
+      <FieldGrid>
+        <Select label="Patient file" required={!editing?.firebase_uid} {...form.bind('patient_id')} disabled={locked}
+          hint={editing?.firebase_uid && editing.patient_id == null ? 'Booked from a patient account. Attach their patient file when you have identified it.' : undefined}>
+          <option value="">{editing?.firebase_uid ? 'No patient file yet' : 'Select a patient…'}</option>
+          {patients.map((p) => <option key={p.patient_id} value={p.patient_id}>{fullName(p)} · #{p.patient_id}</option>)}
+        </Select>
+        <Select label="Doctor" required {...form.bind('doctor_id')} disabled={locked}>
+          <option value="">Select a doctor…</option>
+          {doctors.map((d) => <option key={d.doctor_id} value={d.doctor_id}>{doctorName(d)} · {d.specialization}</option>)}
+        </Select>
+        <Input label="Date" type="date" required {...form.bind('appointment_date')} disabled={locked} />
+        <Input label="Time" type="time" required step={300} {...form.bind('appointment_time')} disabled={locked} />
+        <Select label="Status" {...form.bind('status')} disabled={locked}>
+          {allowedStatuses.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+        </Select>
+      </FieldGrid>
+      <Textarea label="Reason" maxLength={1000} {...form.bind('reason')} />
+    </>
   )
 }
 
 export default function Appointments() {
-  const [appts, setAppts] = useState([])
-  const [patients, setPatients] = useState([])
-  const [doctors, setDoctors] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const { can } = useAuth()
+  const { notify } = useToast()
+  const canWrite = can('appointments:write')
+  const canDelete = can('appointments:delete')
+
+  const { data, loading, error, reload } = useAsync(() => Promise.all([
+    appointmentsApi.listAll(),
+    optional(doctorsApi.listAll()),
+    can('patients:read') ? optional(patientsApi.listAll()) : [],
+  ]), [])
+  const [appointments, doctors, patients] = data ?? [[], [], []]
+  const doctorById = useMemo(() => Object.fromEntries(doctors.map((d) => [d.doctor_id, d])), [doctors])
+
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [formOpen, setFormOpen] = useState(false)
-  const [editTarget, setEditTarget] = useState(null)
-  const [viewTarget, setViewTarget] = useState(null)
-  const [deleteTarget, setDeleteTarget] = useState(null)
-  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState('')
+  const [range, setRange] = useState('upcoming')
+  const [doctorFilter, setDoctorFilter] = useState('')
+
+  const [editing, setEditing] = useState(null) // null | 'new' | appointment
+  const [viewing, setViewing] = useState(null)
+  const [deleting, setDeleting] = useState(null)
+  const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState(null)
-  const [deleting, setDeleting] = useState(false)
+  const form = useForm(EMPTY)
 
-  const patientMap = Object.fromEntries(patients.map((p) => [p.patient_id, `${p.first_name} ${p.last_name}`]))
-  const doctorMap = Object.fromEntries(doctors.map((d) => [d.doctor_id, `Dr. ${d.first_name} ${d.last_name}`]))
+  const today = todayISO()
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return appointments
+      .filter((a) => !status || a.status === status)
+      .filter((a) => !doctorFilter || String(a.doctor_id) === doctorFilter)
+      .filter((a) => range === 'all'
+        || (range === 'today' && a.appointment_date === today)
+        || (range === 'upcoming' && a.appointment_date >= today)
+        || (range === 'past' && a.appointment_date < today))
+      .filter((a) => !q || [
+        a.patient_name, a.booked_by_email, a.reason, String(a.appointment_id),
+        doctorName(doctorById[a.doctor_id]),
+      ].some((v) => v?.toLowerCase().includes(q)))
+      .sort((a, b) => {
+        const k = `${a.appointment_date}${a.appointment_time}`.localeCompare(`${b.appointment_date}${b.appointment_time}`)
+        return range === 'past' ? -k : k
+      })
+  }, [appointments, status, doctorFilter, range, search, today, doctorById])
 
-  const load = useCallback(async () => {
+  function openForm(appt) {
+    setFormError(null)
+    form.reset(appt === 'new' ? EMPTY : {
+      patient_id: appt.patient_id ? String(appt.patient_id) : '',
+      doctor_id: String(appt.doctor_id),
+      appointment_date: appt.appointment_date,
+      appointment_time: appt.appointment_time.slice(0, 5),
+      status: appt.status,
+      reason: appt.reason ?? '',
+    })
+    setEditing(appt)
+  }
+
+  function validate(v) {
+    const e = {}
+    const needsPatient = editing === 'new' || !editing.firebase_uid
+    if (needsPatient && !v.patient_id) e.patient_id = 'Choose a patient file.'
+    if (!v.doctor_id) e.doctor_id = 'Choose a doctor.'
+    if (!v.appointment_date) e.appointment_date = 'Choose a date.'
+    if (!v.appointment_time) e.appointment_time = 'Choose a time.'
+    form.setErrors(e)
+    return !Object.keys(e).length
+  }
+
+  async function save() {
+    const v = form.values
+    if (!validate(v)) return
+    const body = blankToNull({
+      ...v,
+      patient_id: v.patient_id ? Number(v.patient_id) : '',
+      doctor_id: Number(v.doctor_id),
+      reason: v.reason.trim(),
+    })
+    setBusy(true)
+    setFormError(null)
     try {
-      setLoading(true); setError(null)
-      const params = { limit: 100 }
-      if (statusFilter) params.appointment_status = statusFilter
-      const [apptData, ptData, drData] = await Promise.all([
-        appointmentsApi.list(params),
-        patientsApi.list({ limit: 100 }),
-        doctorsApi.list({ limit: 100 }),
-      ])
-      setAppts(apptData); setPatients(ptData); setDoctors(drData)
-    } catch (e) { setError(e.message) }
-    finally { setLoading(false) }
-  }, [statusFilter])
-
-  useEffect(() => { load() }, [load])
-
-  const filtered = appts.filter((a) => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return (patientMap[a.patient_id] ?? '').toLowerCase().includes(q)
-      || (doctorMap[a.doctor_id] ?? '').toLowerCase().includes(q)
-      || (a.reason ?? '').toLowerCase().includes(q)
-      || String(a.appointment_id).includes(q)
-  })
-
-  async function handleCreate(payload) {
-    try { setSaving(true); setFormError(null); await appointmentsApi.create(payload); setFormOpen(false); load() }
-    catch (e) { setFormError(e.message) } finally { setSaving(false) }
+      if (editing === 'new') {
+        await appointmentsApi.create(body)
+        notify('Appointment scheduled.')
+      } else {
+        // Send only what changed, so final-state appointments accept reason edits.
+        const original = {
+          patient_id: editing.patient_id, doctor_id: editing.doctor_id, appointment_date: editing.appointment_date,
+          appointment_time: editing.appointment_time.slice(0, 5), status: editing.status, reason: editing.reason ?? null,
+        }
+        const changes = Object.fromEntries(Object.entries(body).filter(([k, val]) => original[k] !== val))
+        if (Object.keys(changes).length) await appointmentsApi.update(editing.appointment_id, changes)
+        notify('Appointment updated.')
+      }
+      setEditing(null)
+      reload()
+    } catch (err) {
+      setFormError(form.applyServerErrors(err))
+    } finally {
+      setBusy(false)
+    }
   }
-  async function handleUpdate(payload) {
-    try { setSaving(true); setFormError(null); await appointmentsApi.update(editTarget.appointment_id, payload); setEditTarget(null); load() }
-    catch (e) { setFormError(e.message) } finally { setSaving(false) }
-  }
-  async function handleDelete() {
-    try { setDeleting(true); await appointmentsApi.delete(deleteTarget.appointment_id); setDeleteTarget(null); load() }
-    catch (e) { setError(e.message) } finally { setDeleting(false) }
+
+  async function confirmDelete() {
+    setBusy(true)
+    setFormError(null)
+    try {
+      await appointmentsApi.remove(deleting.appointment_id)
+      setDeleting(null)
+      notify('Appointment deleted.')
+      reload()
+    } catch (err) {
+      setFormError(err.message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <RiSearchLine className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-          <input className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:border-navy-500 focus:ring-2 focus:ring-navy-200 bg-white"
-            placeholder="Search by patient, doctor, or reason…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
-        <div className="flex items-center gap-2">
-          <RiFilterLine size={14} className="text-gray-400 shrink-0" />
-          <select
-            className="py-2 pl-3 pr-8 text-sm border border-gray-300 rounded-lg focus:border-navy-500 focus:ring-2 focus:ring-navy-200 bg-white"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="">All statuses</option>
-            {STATUSES.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-          </select>
-        </div>
-        <Button icon={<RiAddLine size={16} />} onClick={() => { setFormError(null); setFormOpen(true) }}>Schedule</Button>
-      </div>
+    <>
+      <PageHeader
+        title="Appointments"
+        description="The clinic schedule, including bookings patients made online."
+        actions={canWrite && <Button icon={RiAddLine} onClick={() => openForm('new')}>Schedule appointment</Button>}
+      />
+      <Panel>
+        <Toolbar count={!loading && !error ? plural(rows.length, 'appointment') : undefined}>
+          <SearchInput value={search} onChange={setSearch} placeholder="Patient, doctor, reason or #ID" className="sm:w-72" />
+          <FilterSelect label="Date range" value={range} onChange={setRange}>
+            <option value="upcoming">Today and later</option>
+            <option value="today">Today</option>
+            <option value="past">Past</option>
+            <option value="all">All dates</option>
+          </FilterSelect>
+          <FilterSelect label="Status" value={status} onChange={setStatus}>
+            <option value="">Any status</option>
+            {Object.entries(STATUS_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </FilterSelect>
+          <FilterSelect label="Doctor" value={doctorFilter} onChange={setDoctorFilter}>
+            <option value="">All doctors</option>
+            {doctors.map((d) => <option key={d.doctor_id} value={d.doctor_id}>{doctorName(d)}</option>)}
+          </FilterSelect>
+        </Toolbar>
+        <DataTable
+          caption="Appointments"
+          loading={loading}
+          error={error}
+          onRetry={reload}
+          rows={rows}
+          rowKey={(a) => a.appointment_id}
+          onRowClick={setViewing}
+          empty={<EmptyState icon={RiCalendarCheckLine} title="No appointments match these filters" />}
+          columns={[
+            { key: 'when', header: 'When', primary: true, render: (a) => (
+              <span className="whitespace-nowrap">
+                <span className="font-medium text-ink-900">{formatDate(a.appointment_date)}</span>
+                <span className="text-ink-500"> · {formatTime(a.appointment_time)}</span>
+              </span>
+            ) },
+            { key: 'patient', header: 'Patient', render: (a) => <PatientCell appt={a} /> },
+            { key: 'doctor', header: 'Doctor', render: (a) => (doctorById[a.doctor_id] ? doctorName(doctorById[a.doctor_id]) : `#${a.doctor_id}`) },
+            { key: 'status', header: 'Status', render: (a) => <StatusBadge value={a.status} /> },
+            { key: 'reason', header: 'Reason', hideOnMobile: true, className: 'max-w-[16rem] text-ink-600', render: (a) => <span className="line-clamp-2">{a.reason || '—'}</span> },
+          ]}
+          actions={(canWrite || canDelete) ? (a) => (
+            <>
+              {canWrite && <IconButton icon={RiPencilLine} label={`Edit appointment #${a.appointment_id}`} onClick={() => openForm(a)} />}
+              {canDelete && <IconButton icon={RiDeleteBinLine} tone="danger" label={`Delete appointment #${a.appointment_id}`} onClick={() => { setFormError(null); setDeleting(a) }} />}
+            </>
+          ) : undefined}
+        />
+      </Panel>
 
-      {error && <ErrorAlert message={error} onDismiss={() => setError(null)} />}
+      <FormModal
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        title={editing === 'new' ? 'Schedule appointment' : `Edit appointment #${editing?.appointment_id}`}
+        onSubmit={save}
+        busy={busy}
+        error={formError}
+        submitLabel={editing === 'new' ? 'Schedule' : 'Save changes'}
+      >
+        <AppointmentForm form={form} patients={patients} doctors={doctors} editing={editing === 'new' ? null : editing} />
+      </FormModal>
 
-      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
-          <RiCalendarCheckLine size={16} className="text-gray-500" />
-          <span className="text-sm font-medium text-gray-700">
-            {loading ? 'Loading…' : `${filtered.length} appointment${filtered.length !== 1 ? 's' : ''}`}
-          </span>
-        </div>
-
-        {loading ? <PageLoader /> : filtered.length === 0 ? (
-          <EmptyState icon={<RiCalendarCheckLine size={28} />} title={search || statusFilter ? 'No matching appointments' : 'No appointments yet'}
-            action={!search && !statusFilter && <Button icon={<RiAddLine size={15} />} onClick={() => setFormOpen(true)}>Schedule Appointment</Button>} />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[720px]">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100">
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Patient</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Doctor</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date & Time</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reason</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filtered.map((a) => (
-                  <tr key={a.appointment_id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 font-mono text-xs text-gray-400">#{a.appointment_id}</td>
-                    <td className="px-4 py-3 font-medium text-gray-800">{patientMap[a.patient_id] ?? `#${a.patient_id}`}</td>
-                    <td className="px-4 py-3 text-gray-600">{doctorMap[a.doctor_id] ?? `#${a.doctor_id}`}</td>
-                    <td className="px-4 py-3">
-                      <p className="text-gray-800">{formatDate(a.appointment_date)}</p>
-                      <p className="text-xs text-gray-400">{formatTime(a.appointment_time)}</p>
-                    </td>
-                    <td className="px-4 py-3"><StatusBadge value={a.status} /></td>
-                    <td className="px-4 py-3 text-gray-500 max-w-[140px] truncate">{a.reason ?? '—'}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => setViewTarget(a)} className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="View"><RiEyeLine size={15} /></button>
-                        <button onClick={() => { setFormError(null); setEditTarget(a) }} className="p-1.5 rounded-lg text-gray-400 hover:text-teal-600 hover:bg-teal-50 transition-colors" title="Edit"><RiEditLine size={15} /></button>
-                        <button onClick={() => setDeleteTarget(a)} className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Delete"><RiDeleteBinLine size={15} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      <Modal open={!!viewing} onClose={() => setViewing(null)} title={`Appointment #${viewing?.appointment_id}`}
+        footer={canWrite && <Button variant="secondary" icon={RiPencilLine} onClick={() => { const a = viewing; setViewing(null); openForm(a) }}>Edit</Button>}>
+        {viewing && (
+          <DetailList items={[
+            ['Status', <StatusBadge value={viewing.status} />],
+            ['Date and time', `${formatDate(viewing.appointment_date, { weekday: 'long' })} at ${formatTime(viewing.appointment_time)}`],
+            ['Doctor', doctorById[viewing.doctor_id] ? `${doctorName(doctorById[viewing.doctor_id])} · ${doctorById[viewing.doctor_id].specialization}` : `#${viewing.doctor_id}`],
+            ['Patient file', viewing.patient_id != null ? `${viewing.patient_name} · #${viewing.patient_id}` : 'Not linked yet'],
+            viewing.firebase_uid && ['Booked online by', [viewing.booked_by_name, viewing.booked_by_email].filter(Boolean).join(' · ')],
+            ['Reason', viewing.reason],
+            ['Created', formatDateTime(viewing.created_at)],
+          ]} />
         )}
-      </div>
+      </Modal>
 
-      <Modal open={formOpen} onClose={() => setFormOpen(false)} title="Schedule Appointment" size="lg">
-        <AppointmentForm patients={patients} doctors={doctors} onSubmit={handleCreate} onCancel={() => setFormOpen(false)} loading={saving} error={formError} />
-      </Modal>
-      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title="Edit Appointment" size="lg">
-        {editTarget && <AppointmentForm
-          patients={patients} doctors={doctors}
-          initial={{
-            patient_id: String(editTarget.patient_id),
-            doctor_id: String(editTarget.doctor_id),
-            appointment_date: editTarget.appointment_date,
-            appointment_time: editTarget.appointment_time.slice(0, 5),
-            status: editTarget.status,
-            reason: editTarget.reason ?? '',
-          }}
-          onSubmit={handleUpdate} onCancel={() => setEditTarget(null)} loading={saving} error={formError} />}
-      </Modal>
-      <Modal open={!!viewTarget} onClose={() => setViewTarget(null)} title="Appointment Details">
-        {viewTarget && <AppointmentDetail appt={viewTarget} patientMap={patientMap} doctorMap={doctorMap}
-          onEdit={() => { setFormError(null); setEditTarget(viewTarget); setViewTarget(null) }}
-          onClose={() => setViewTarget(null)} />}
-      </Modal>
-      <ConfirmDialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete}
-        title="Delete Appointment" danger loading={deleting}
-        message={`Delete appointment #${deleteTarget?.appointment_id}? This cannot be undone.`}
-        confirmLabel="Delete" />
-    </div>
+      <ConfirmDialog
+        open={!!deleting}
+        onClose={() => setDeleting(null)}
+        onConfirm={confirmDelete}
+        title="Delete this appointment?"
+        message="The appointment will be removed permanently. Appointments with a medical record or bill cannot be deleted — cancel them instead."
+        confirmLabel="Delete"
+        danger
+        loading={busy}
+        error={formError}
+      />
+    </>
   )
 }

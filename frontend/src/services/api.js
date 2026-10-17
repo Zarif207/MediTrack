@@ -1,169 +1,186 @@
 /**
- * MediTrack API client
+ * MediTrack API client.
  *
- * All requests go through the Vite dev-proxy at /api → http://127.0.0.1:8000
- * In production set VITE_API_BASE_URL to the backend origin.
- *
- * If Firebase is configured, each request automatically includes the current
- * user's ID token as a Bearer token so the backend can verify it.
- * Public GET endpoints (departments, doctors) work without a token.
+ * - Requests go to VITE_API_BASE_URL, or /api (proxied to FastAPI by Vite).
+ * - The signed-in user's Firebase ID token is attached as a Bearer token.
+ *   The SDK refreshes expired tokens; on a 401 the request is retried once
+ *   with a forced refresh before the session is treated as ended.
+ * - Every failure is thrown as an ApiError with a human-readable message, the
+ *   HTTP status and, for validation errors, per-field messages.
  */
 import { auth } from './firebase'
 
-const BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'
+const BASE = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '')
 
-/** Get the current Firebase ID token, or null if not signed in / not configured */
-async function getIdToken() {
-  if (!auth || !auth.currentUser) return null
+/** Fired when the backend rejects the session even after a token refresh. */
+export const SESSION_EXPIRED_EVENT = 'meditrack:session-expired'
+
+export class ApiError extends Error {
+  constructor(message, { status = 0, fieldErrors = {}, cause } = {}) {
+    super(message, { cause })
+    this.name = 'ApiError'
+    this.status = status
+    this.fieldErrors = fieldErrors
+  }
+
+  get isNetwork() { return this.status === 0 }
+  get isForbidden() { return this.status === 403 }
+  get isNotFound() { return this.status === 404 }
+}
+
+const STATUS_MESSAGES = {
+  401: 'Your session has ended. Please sign in again.',
+  403: 'You do not have permission to do that.',
+  404: 'That item could not be found.',
+  409: 'That conflicts with existing data.',
+  422: 'Some details need attention.',
+  429: 'Too many requests. Please wait a moment and try again.',
+  503: 'The service is temporarily unavailable. Please try again shortly.',
+}
+
+const FIELD_LABELS = {
+  first_name: 'First name', last_name: 'Last name', date_of_birth: 'Date of birth',
+  appointment_date: 'Date', appointment_time: 'Time', doctor_id: 'Doctor',
+  patient_id: 'Patient', department_id: 'Department', license_number: 'License number',
+  unit_price: 'Unit price', stock_quantity: 'Stock', payment_status: 'Payment status',
+  payment_method: 'Payment method', blood_group: 'Blood group',
+  emergency_contact: 'Emergency contact', medicine_id: 'Medicine',
+  prescription_id: 'Prescription', record_id: 'Medical record',
+}
+
+function humanField(name) {
+  return FIELD_LABELS[name] ?? name.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+}
+
+function cleanValidationMessage(msg = '') {
+  // Pydantic prefixes custom messages with "Value error, ".
+  return msg.replace(/^Value error, /, '').replace(/^String should/, 'Should')
+}
+
+function toApiError(status, data) {
+  const detail = data?.detail
+  if (status === 422 && Array.isArray(detail)) {
+    const fieldErrors = {}
+    for (const e of detail) {
+      const field = e.loc?.filter((p) => p !== 'body' && p !== 'query' && p !== 'path').join('.') || 'form'
+      if (!fieldErrors[field]) fieldErrors[field] = cleanValidationMessage(e.msg)
+    }
+    const summary = Object.entries(fieldErrors)
+      .map(([f, m]) => (f === 'form' ? m : `${humanField(f)}: ${m}`))
+      .join(' ')
+    return new ApiError(summary || STATUS_MESSAGES[422], { status, fieldErrors })
+  }
+  if (status >= 500 && status !== 503) {
+    return new ApiError('Something went wrong on our side. Please try again.', { status })
+  }
+  const message = typeof detail === 'string' && detail ? detail : STATUS_MESSAGES[status] ?? `Request failed (${status}).`
+  return new ApiError(message, { status })
+}
+
+async function currentToken(forceRefresh = false) {
+  const user = auth?.currentUser
+  if (!user) return null
   try {
-    return await auth.currentUser.getIdToken(false)
+    return await user.getIdToken(forceRefresh)
   } catch {
     return null
   }
 }
 
-/** Generic fetch wrapper */
-async function request(method, path, body, params) {
+async function send(method, path, { body, params, token }) {
   const url = new URL(`${BASE}${path}`, window.location.origin)
-  if (params) {
-    Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v)
-    })
+  for (const [k, v] of Object.entries(params ?? {})) {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v)
   }
+  const headers = { Accept: 'application/json' }
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  if (token) headers.Authorization = `Bearer ${token}`
 
-  const headers = { 'Content-Type': 'application/json' }
-
-  // Attach Firebase ID token when available
-  const token = await getIdToken()
-  if (token) headers['Authorization'] = `Bearer ${token}`
-
-  const options = { method, headers }
-  if (body !== undefined) options.body = JSON.stringify(body)
-
-  let res
   try {
-    res = await fetch(url.toString(), options)
-  } catch (networkErr) {
-    throw new Error(
-      `Cannot reach the backend at ${BASE}. ` +
-      `Make sure the FastAPI server is running. (${networkErr.message})`,
-      { cause: networkErr }
+    return await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+  } catch (cause) {
+    throw new ApiError(
+      'Cannot reach the MediTrack server. Check your connection and try again.',
+      { status: 0, cause },
     )
   }
+}
 
-  if (res.status === 204) return null // DELETE success
+async function request(method, path, { body, params } = {}) {
+  let token = await currentToken()
+  let res = await send(method, path, { body, params, token })
 
-  const data = await res.json().catch(() => ({}))
-
-  if (!res.ok) {
-    // FastAPI validation errors: { detail: [...] } or { detail: "string" }
-    const msg =
-      Array.isArray(data?.detail)
-        ? data.detail.map((e) => `${e.loc?.slice(1).join('.')}: ${e.msg}`).join('\n')
-        : data?.detail ?? `HTTP ${res.status}`
-    throw new Error(msg)
+  if (res.status === 401 && token) {
+    token = await currentToken(true)
+    if (token) res = await send(method, path, { body, params, token })
+    if (res.status === 401) window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT))
   }
 
+  if (res.status === 204) return null
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw toApiError(res.status, data)
   return data
 }
 
-const get    = (path, params) => request('GET',    path, undefined, params)
-const post   = (path, body)   => request('POST',   path, body)
-const patch  = (path, body)   => request('PATCH',  path, body)
-const del    = (path)         => request('DELETE', path)
+const get = (path, params) => request('GET', path, { params })
+const post = (path, body) => request('POST', path, { body })
+const patch = (path, body) => request('PATCH', path, { body })
+const del = (path) => request('DELETE', path)
 
-/* ── Health ── */
-export const healthApi = {
-  check: () => get('/health'),
+const PAGE = 100
+const MAX_ROWS = 5000
+
+/** Fetch every page of a list endpoint (bounded), so tables never silently truncate. */
+async function listAll(path, params = {}) {
+  const rows = []
+  for (let skip = 0; skip < MAX_ROWS; skip += PAGE) {
+    const page = await get(path, { ...params, skip, limit: PAGE })
+    rows.push(...page)
+    if (page.length < PAGE) break
+  }
+  return rows
 }
 
-/* ── Auth / user profile ── */
+function resource(path) {
+  return {
+    list: (params) => get(path, params),
+    listAll: (params) => listAll(path, params),
+    get: (id) => get(`${path}${id}`),
+    create: (body) => post(path, body),
+    update: (id, body) => patch(`${path}${id}`, body),
+    remove: (id) => del(`${path}${id}`),
+  }
+}
+
+export const healthApi = { check: () => get('/health') }
+
 export const authApi = {
-  register: (body) => post('/auth/register', body),
-  me:       ()     => get('/auth/me'),
-  refreshMe: ()    => post('/auth/me/refresh', {}),
-  listUsers: ()    => get('/auth/users'),
-  setRole:  (uid, role) => patch(`/auth/users/${uid}/role`, { role }),
-  linkPatient: (uid, patientId) => patch(`/auth/users/${uid}/link-patient`, { patient_id: patientId }),
+  register: (displayName) => post('/auth/register', displayName ? { display_name: displayName } : {}),
+  me: () => get('/auth/me'),
+  updateMe: (body) => patch('/auth/me', body),
+  listUsers: () => get('/auth/users'),
+  setRole: (uid, role) => patch(`/auth/users/${encodeURIComponent(uid)}/role`, { role }),
+  linkPatient: (uid, patientId) =>
+    patch(`/auth/users/${encodeURIComponent(uid)}/link-patient`, { patient_id: patientId }),
 }
 
-/* ── Patients ── */
-export const patientsApi = {
-  list:   (params) => get('/patients/', params),
-  get:    (id)     => get(`/patients/${id}`),
-  create: (body)   => post('/patients/', body),
-  update: (id, body) => patch(`/patients/${id}`, body),
-  delete: (id)     => del(`/patients/${id}`),
-}
-
-/* ── Departments ── */
-export const departmentsApi = {
-  list:   (params) => get('/departments/', params),
-  get:    (id)     => get(`/departments/${id}`),
-  create: (body)   => post('/departments/', body),
-  update: (id, body) => patch(`/departments/${id}`, body),
-  delete: (id)     => del(`/departments/${id}`),
-}
-
-/* ── Doctors ── */
+export const patientsApi = resource('/patients/')
+export const departmentsApi = resource('/departments/')
 export const doctorsApi = {
-  list:   (params) => get('/doctors/', params),
-  get:    (id)     => get(`/doctors/${id}`),
-  create: (body)   => post('/doctors/', body),
-  update: (id, body) => patch(`/doctors/${id}`, body),
-  delete: (id)     => del(`/doctors/${id}`),
+  ...resource('/doctors/'),
+  availability: (doctorId, on) => get(`/doctors/${doctorId}/availability`, { on }),
 }
-
-/* ── Appointments ── */
 export const appointmentsApi = {
-  list:   (params) => get('/appointments/', params),
-  get:    (id)     => get(`/appointments/${id}`),
-  create: (body)   => post('/appointments/', body),
-  update: (id, body) => patch(`/appointments/${id}`, body),
-  delete: (id)     => del(`/appointments/${id}`),
+  ...resource('/appointments/'),
+  book: (body) => post('/appointments/book', body),
+  cancel: (id) => post(`/appointments/${id}/cancel`),
 }
-
-/* ── Medical Records ── */
-export const medicalRecordsApi = {
-  list:   (params) => get('/medical-records/', params),
-  get:    (id)     => get(`/medical-records/${id}`),
-  create: (body)   => post('/medical-records/', body),
-  update: (id, body) => patch(`/medical-records/${id}`, body),
-  delete: (id)     => del(`/medical-records/${id}`),
-}
-
-/* ── Medicines ── */
-export const medicinesApi = {
-  list:   (params) => get('/medicines/', params),
-  get:    (id)     => get(`/medicines/${id}`),
-  create: (body)   => post('/medicines/', body),
-  update: (id, body) => patch(`/medicines/${id}`, body),
-  delete: (id)     => del(`/medicines/${id}`),
-}
-
-/* ── Prescriptions ── */
-export const prescriptionsApi = {
-  list:   (params) => get('/prescriptions/', params),
-  get:    (id)     => get(`/prescriptions/${id}`),
-  create: (body)   => post('/prescriptions/', body),
-  update: (id, body) => patch(`/prescriptions/${id}`, body),
-  delete: (id)     => del(`/prescriptions/${id}`),
-}
-
-/* ── Prescription Items ── */
-export const prescriptionItemsApi = {
-  list:   (params) => get('/prescription-items/', params),
-  get:    (id)     => get(`/prescription-items/${id}`),
-  create: (body)   => post('/prescription-items/', body),
-  update: (id, body) => patch(`/prescription-items/${id}`, body),
-  delete: (id)     => del(`/prescription-items/${id}`),
-}
-
-/* ── Bills ── */
-export const billsApi = {
-  list:   (params) => get('/bills/', params),
-  get:    (id)     => get(`/bills/${id}`),
-  create: (body)   => post('/bills/', body),
-  update: (id, body) => patch(`/bills/${id}`, body),
-  delete: (id)     => del(`/bills/${id}`),
-}
+export const medicalRecordsApi = resource('/medical-records/')
+export const medicinesApi = resource('/medicines/')
+export const prescriptionsApi = resource('/prescriptions/')
+export const prescriptionItemsApi = resource('/prescription-items/')
+export const billsApi = resource('/bills/')

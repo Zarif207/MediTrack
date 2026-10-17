@@ -1,16 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_current_user, get_patient_id_for_user, require_roles
+from app.auth.dependencies import allow_patient_or, require_permission
+from app.auth.ownership import is_patient, not_found, owns_appointment
 from app.database.dependencies import get_db
-from app.models.appointment import Appointment
-from app.models.medical_record import MedicalRecord
-from app.models.prescription import Prescription
-from app.models.prescription_item import PrescriptionItem
 from app.models.user_profile import UserProfile
+from app.routes.params import IdPath, IdQuery, Limit, Skip
 from app.schemas.prescription_item import (
     PrescriptionItemCreate,
     PrescriptionItemResponse,
@@ -24,37 +21,19 @@ from app.services.prescription_item_service import (
     update_prescription_item,
 )
 
-_STAFF_READ  = require_roles("admin", "doctor", "pharmacist")
-_WRITE_ROLES = require_roles("admin", "doctor", "pharmacist")
-_ANY_ALLOWED = require_roles("admin", "doctor", "pharmacist", "patient")
-
 router = APIRouter(prefix="/prescription-items", tags=["Prescription Items"])
 
 
-def _assert_patient_owns_item(
-    item: PrescriptionItem,
-    scoped_patient_id: int,
-    db: Session,
-) -> None:
-    """Verify the item's parent prescription belongs to the patient via the full chain."""
-    pres = db.get(Prescription, item.prescription_id)
-    if pres is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
-    record = db.get(MedicalRecord, pres.record_id)
-    if record is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
-    appt = db.get(Appointment, record.appointment_id)
-    if appt is None or appt.patient_id != scoped_patient_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only access your own prescription items.",
-        )
+def _owned(user: UserProfile, item) -> bool:
+    prescription = item.prescription
+    record = prescription.medical_record if prescription else None
+    return record is not None and owns_appointment(user, record.appointment)
 
 
-@router.post("/", response_model=PrescriptionItemResponse, status_code=201)
+@router.post("/", response_model=PrescriptionItemResponse, status_code=status.HTTP_201_CREATED)
 def create_prescription_item_endpoint(
     data: PrescriptionItemCreate,
-    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
+    _: Annotated[UserProfile, Depends(require_permission("prescription_items:write"))],
     db: Session = Depends(get_db),
 ):
     return create_prescription_item(db, data)
@@ -62,55 +41,38 @@ def create_prescription_item_endpoint(
 
 @router.get("/", response_model=list[PrescriptionItemResponse])
 def list_prescription_items(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    prescription_id: int | None = Query(default=None, gt=0),
-    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
-    scoped_patient_id: int | None = Depends(get_patient_id_for_user),
+    current_user: Annotated[UserProfile, Depends(allow_patient_or("prescription_items:read"))],
+    skip: Skip = 0,
+    limit: Limit = 20,
+    prescription_id: IdQuery | None = None,
     db: Session = Depends(get_db),
 ):
-    if current_user.role == "patient":
-        if scoped_patient_id is None:
-            return []  # no patient record yet
-        stmt = (
-            select(PrescriptionItem)
-            .join(Prescription, PrescriptionItem.prescription_id == Prescription.prescription_id)
-            .join(MedicalRecord, Prescription.record_id == MedicalRecord.record_id)
-            .join(Appointment, MedicalRecord.appointment_id == Appointment.appointment_id)
-            .where(Appointment.patient_id == scoped_patient_id)
-            .order_by(PrescriptionItem.prescription_item_id)
-            .offset(skip)
-            .limit(limit)
-        )
-        return list(db.scalars(stmt).all())
-
-    return get_prescription_items(db, skip, limit, prescription_id)
+    return get_prescription_items(
+        db, skip=skip, limit=limit,
+        prescription_id=prescription_id,
+        owner=current_user if is_patient(current_user) else None,
+    )
 
 
 @router.get("/{item_id}", response_model=PrescriptionItemResponse)
 def retrieve_prescription_item(
-    item_id: int,
-    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
-    scoped_patient_id: int | None = Depends(get_patient_id_for_user),
+    item_id: IdPath,
+    current_user: Annotated[UserProfile, Depends(allow_patient_or("prescription_items:read"))],
     db: Session = Depends(get_db),
 ):
     item = get_prescription_item(db, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Prescription item not found.")
-
-    if current_user.role == "patient":
-        if scoped_patient_id is None:
-            raise HTTPException(status_code=404, detail="Prescription item not found.")
-        _assert_patient_owns_item(item, scoped_patient_id, db)
-
+    if is_patient(current_user) and not _owned(current_user, item):
+        raise not_found("Prescription item")
     return item
 
 
 @router.patch("/{item_id}", response_model=PrescriptionItemResponse)
 def edit_prescription_item(
-    item_id: int,
+    item_id: IdPath,
     data: PrescriptionItemUpdate,
-    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
+    _: Annotated[UserProfile, Depends(require_permission("prescription_items:write"))],
     db: Session = Depends(get_db),
 ):
     item = get_prescription_item(db, item_id)
@@ -119,14 +81,14 @@ def edit_prescription_item(
     return update_prescription_item(db, item, data)
 
 
-@router.delete("/{item_id}", status_code=204)
+@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_prescription_item(
-    item_id: int,
-    _: Annotated[UserProfile, Depends(require_roles("admin", "doctor"))],
+    item_id: IdPath,
+    _: Annotated[UserProfile, Depends(require_permission("prescription_items:delete"))],
     db: Session = Depends(get_db),
 ):
     item = get_prescription_item(db, item_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Prescription item not found.")
     delete_prescription_item(db, item)
-    return Response(status_code=204)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

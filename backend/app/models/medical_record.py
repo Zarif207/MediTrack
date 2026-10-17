@@ -48,3 +48,12 @@ class MedicalRecord(Base):
     prescriptions: Mapped[list["Prescription"]] = relationship(
         back_populates="medical_record",
     )
+
+    # ── Read-only values exposed in API responses ────────────────────────────
+    @property
+    def patient_id(self) -> int | None:
+        return self.appointment.patient_id if self.appointment else None
+
+    @property
+    def patient_name(self) -> str | None:
+        return self.appointment.patient_name if self.appointment else None

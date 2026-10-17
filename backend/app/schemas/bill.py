@@ -4,19 +4,23 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.common import PositiveId, RequestModel, UpdateModel
+
 
 PaymentStatus = Literal["pending", "paid", "cancelled"]
 
 
-class BillCreate(BaseModel):
-    patient_id: int = Field(gt=0)
-    appointment_id: int = Field(gt=0)
+class BillCreate(RequestModel):
+    patient_id: PositiveId
+    appointment_id: PositiveId
     amount: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     payment_status: PaymentStatus = "pending"
     payment_method: str | None = Field(default=None, max_length=30)
 
 
-class BillUpdate(BaseModel):
+class BillUpdate(UpdateModel):
+    NON_NULLABLE = ("amount", "payment_status")
+
     amount: Decimal | None = Field(
         default=None, ge=0, max_digits=10, decimal_places=2
     )

@@ -1,50 +1,71 @@
 /**
- * Button — flexible button component
- * variant: 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline'
- * size: 'sm' | 'md' | 'lg'
+ * Button
+ *   variant: primary | secondary | ghost | danger
+ *   size:    sm | md | lg
+ * Renders a react-router <Link> when `to` is given.
  */
+import { Link } from 'react-router'
+import Spinner from './Spinner'
 
 const VARIANTS = {
-  primary:   'bg-navy-800 hover:bg-navy-900 text-white border-transparent shadow-sm',
-  secondary: 'bg-teal-600 hover:bg-teal-700 text-white border-transparent shadow-sm',
-  danger:    'bg-red-600 hover:bg-red-700 text-white border-transparent shadow-sm',
-  ghost:     'bg-transparent hover:bg-gray-100 text-gray-700 border-transparent',
-  outline:   'bg-white hover:bg-gray-50 text-gray-700 border-gray-300 shadow-sm',
+  primary: 'bg-pine-700 text-white hover:bg-pine-800 active:bg-pine-900 border-transparent',
+  secondary: 'bg-surface text-ink-800 border-ink-200 hover:border-ink-300 hover:bg-ink-50',
+  ghost: 'bg-transparent text-ink-700 border-transparent hover:bg-ink-100',
+  danger: 'bg-danger-600 text-white hover:bg-danger-700 border-transparent',
 }
 
 const SIZES = {
-  sm: 'px-3 py-1.5 text-xs gap-1.5',
-  md: 'px-4 py-2 text-sm gap-2',
-  lg: 'px-5 py-2.5 text-base gap-2',
+  sm: 'h-8 px-3 text-[13px] gap-1.5',
+  md: 'h-9 px-3.5 text-sm gap-2',
+  lg: 'h-11 px-5 text-[15px] gap-2',
 }
 
 export default function Button({
-  children,
   variant = 'primary',
   size = 'md',
-  disabled = false,
   loading = false,
-  icon,
+  disabled = false,
+  icon: Icon,
+  to,
   className = '',
+  children,
+  type = 'button',
   ...props
 }) {
+  const cls = `inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-md border font-medium
+    transition-colors duration-100 disabled:pointer-events-none disabled:opacity-50
+    ${VARIANTS[variant]} ${SIZES[size]} ${className}`
+  const content = (
+    <>
+      {loading ? <Spinner size="sm" /> : Icon ? <Icon aria-hidden size={size === 'sm' ? 15 : 17} /> : null}
+      {children}
+    </>
+  )
+  if (to) {
+    return <Link to={to} className={cls} {...props}>{content}</Link>
+  }
+  return (
+    <button type={type} className={cls} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>
+      {content}
+    </button>
+  )
+}
+
+/** Square icon button. `label` is required: it is the accessible name. */
+export function IconButton({ icon: Icon, label, tone = 'default', className = '', ...props }) {
+  const tones = {
+    default: 'text-ink-500 hover:text-ink-900 hover:bg-ink-100',
+    danger: 'text-ink-500 hover:text-danger-700 hover:bg-danger-50',
+  }
   return (
     <button
-      className={`
-        inline-flex items-center justify-center font-medium rounded-lg border
-        transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-navy-500 focus:ring-offset-1
-        disabled:opacity-50 disabled:cursor-not-allowed
-        ${VARIANTS[variant]} ${SIZES[size]} ${className}
-      `}
-      disabled={disabled || loading}
+      type="button"
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors ${tones[tone]} ${className}`}
       {...props}
     >
-      {loading ? (
-        <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-      ) : icon ? (
-        <span className="shrink-0">{icon}</span>
-      ) : null}
-      {children}
+      <Icon aria-hidden size={17} />
     </button>
   )
 }

@@ -1,18 +1,22 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.common import RequestModel, UpdateModel
 
-class DepartmentCreate(BaseModel):
+
+class DepartmentCreate(RequestModel):
     department_name: str = Field(min_length=1, max_length=100)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=2000)
 
 
-class DepartmentUpdate(BaseModel):
+class DepartmentUpdate(UpdateModel):
+    NON_NULLABLE = ("department_name",)
+
     department_name: str | None = Field(
         default=None,
         min_length=1,
         max_length=100,
     )
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=2000)
 
 
 class DepartmentResponse(BaseModel):

@@ -1,38 +1,22 @@
-import { Link } from 'react-router'
+import { RiLockLine } from 'react-icons/ri'
 import { useAuth } from '../../context/useAuth'
-import { RiShieldLine, RiArrowLeftLine, RiLogoutBoxLine } from 'react-icons/ri'
+import { ROLE_LABELS } from '../../config/navigation'
+import Button from '../../components/ui/Button'
 
+/** Rendered inside the app layout when the signed-in role may not open a page. */
 export default function AccessDenied() {
-  const { profile, signOut } = useAuth()
-
+  const { role } = useAuth()
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="text-center max-w-md">
-        <div className="w-20 h-20 rounded-2xl bg-red-100 flex items-center justify-center mx-auto mb-6">
-          <RiShieldLine size={36} className="text-red-500" />
-        </div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Access Denied</h1>
-        <p className="text-gray-500 mb-2">
-          You don't have permission to view this page.
-        </p>
-        {profile && (
-          <p className="text-sm text-gray-400 mb-6">
-            Signed in as <span className="font-medium text-gray-600">{profile.email ?? profile.display_name}</span>{' '}
-            with role <span className="font-semibold text-navy-700">{profile.role}</span>.
-            Contact an administrator to have your role updated.
-          </p>
-        )}
-        <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <Link to="/dashboard"
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-navy-800 text-white font-medium hover:bg-navy-900 transition-colors text-sm">
-            <RiArrowLeftLine size={15} /> Dashboard
-          </Link>
-          <button onClick={signOut}
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-100 transition-colors text-sm">
-            <RiLogoutBoxLine size={15} /> Sign out
-          </button>
-        </div>
+    <div className="mx-auto max-w-md py-16 text-center">
+      <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-lg bg-ink-100 text-ink-500">
+        <RiLockLine aria-hidden size={21} />
       </div>
+      <h1 className="text-lg font-semibold">This page isn’t available to your account</h1>
+      <p className="mt-2 text-sm text-ink-600">
+        You are signed in as <strong className="font-medium">{ROLE_LABELS[role] ?? role ?? 'an unknown role'}</strong>.
+        If you need access, ask an administrator to review your role.
+      </p>
+      <Button className="mt-6" variant="secondary" to="/dashboard">Back to overview</Button>
     </div>
   )
 }

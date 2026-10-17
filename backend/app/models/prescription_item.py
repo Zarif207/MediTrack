@@ -80,3 +80,15 @@ class PrescriptionItem(Base):
     #         name="uq_prescription_medicine",
     #     ),
     # )
+    # ── Read-only values exposed in API responses ────────────────────────────
+    @property
+    def medicine_name(self) -> str | None:
+        return self.medicine.medicine_name if self.medicine else None
+
+    @property
+    def medicine_strength(self) -> str | None:
+        return self.medicine.strength if self.medicine else None
+
+    @property
+    def medicine_form(self) -> str | None:
+        return self.medicine.dosage_form if self.medicine else None

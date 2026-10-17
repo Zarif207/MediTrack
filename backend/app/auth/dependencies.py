@@ -1,33 +1,20 @@
 """
 FastAPI auth dependencies.
 
-Role summary:
-  user          — new account, no clinical permissions
-  patient       — can book appointments + view own health data when linked
-  doctor/pharmacist/receptionist/accountant — respective staff permissions
-  admin         — full management access
-
-Usage:
-    from app.auth.dependencies import require_roles, get_patient_id_for_user
-
-    @router.get("/...")
-    def endpoint(user = Depends(require_roles("admin", "receptionist"))):
-        ...
-
 Flow:
     1. Client sends  Authorization: Bearer <firebase-id-token>
-    2. verify_firebase_token()  →  Firebase Admin SDK  →  decoded claims dict
-    3. get_current_user()       →  looks up / creates UserProfile in PostgreSQL
-       (also syncs display_name/email from token)
-    4. require_roles(...)       →  checks role column, raises 403 if not allowed
-    5. get_patient_id_for_user()→  returns trusted patient_id or None (staff),
-                                   raises 403 for unlinked patient-role accounts
-                                   on health-data endpoints
-    6. get_optional_patient_id()→  like above but returns None for unlinked
-                                   patients instead of raising 403
+    2. verify_firebase_token()  → Firebase Admin SDK → decoded claims dict
+    3. get_current_user()       → loads / provisions the UserProfile row
+    4. require_permission(...)  → staff permission check (app.auth.permissions)
+       allow_patient_or(...)    → staff permission OR patient role; the endpoint
+                                  then scopes queries to the patient's own data
+
+The browser never supplies a UID, role or patient_id that the server trusts:
+the UID comes from the verified token and everything else from PostgreSQL.
 """
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 import firebase_admin
@@ -36,10 +23,23 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
 from sqlalchemy.orm import Session
 
+from app.auth.permissions import ALL_PERMISSIONS, has_permission
 from app.database.dependencies import get_db
 from app.models.user_profile import UserProfile, VALID_ROLES
 
-_bearer = HTTPBearer(auto_error=True)
+logger = logging.getLogger(__name__)
+
+_bearer = HTTPBearer(auto_error=False)
+
+_UNAUTHENTICATED = "Authentication required. Please sign in."
+
+
+def _unauthorized(detail: str = _UNAUTHENTICATED) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def _is_firebase_configured() -> bool:
@@ -47,16 +47,16 @@ def _is_firebase_configured() -> bool:
 
 
 async def verify_firebase_token(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> dict:
-    """Verify a Firebase ID token. Raises 401 or 503 on failure."""
+    """Verify a Firebase ID token. Raises 401 (bad token) or 503 (not configured)."""
+    if credentials is None or not credentials.credentials:
+        raise _unauthorized()
+
     if not _is_firebase_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Firebase is not configured on this server. "
-                "Set FIREBASE_SERVICE_ACCOUNT_PATH in backend/.env and restart."
-            ),
+            detail="Authentication is temporarily unavailable.",
         )
 
     try:
@@ -64,30 +64,23 @@ async def verify_firebase_token(
             credentials.credentials, check_revoked=True
         )
     except firebase_auth.RevokedIdTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked. Please sign in again.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _unauthorized("Your session has been revoked. Please sign in again.")
     except firebase_auth.ExpiredIdTokenError:
+        raise _unauthorized("Your session has expired. Please sign in again.")
+    except firebase_auth.UserDisabledError:
+        raise _unauthorized("This account has been disabled.")
+    except firebase_auth.CertificateFetchError:
+        logger.warning("Firebase public certificates could not be fetched.")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired. Please sign in again.",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication is temporarily unavailable.",
         )
-    except firebase_auth.InvalidIdTokenError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid authentication token: {exc}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token verification failed: {exc}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    except Exception as exc:  # noqa: BLE001 — never echo token or SDK details
+        logger.info("Rejected ID token (%s).", type(exc).__name__)
+        raise _unauthorized("Invalid authentication token.")
 
+    if not decoded.get("uid"):
+        raise _unauthorized("Invalid authentication token.")
     return decoded
 
 
@@ -98,99 +91,114 @@ async def get_current_user(
     """
     Return the UserProfile for the authenticated Firebase user.
 
-    - Auto-provisions a 'user'-role profile on first sign-in.
-    - Syncs display_name / email from the Firebase token on every request
-      so stale nulls get filled in over time.
+    - Provisions a 'user'-role profile on first sign-in (no permissions).
+    - Keeps the cached email in step with the verified token.
+    - Fills display_name from the token only while the profile has none, so a
+      name changed through PATCH /auth/me is not overwritten.
     """
     uid = claims["uid"]
     profile = db.get(UserProfile, uid)
-
-    firebase_name  = claims.get("name")
-    firebase_email = claims.get("email")
+    token_email = claims.get("email")
+    token_name = claims.get("name")
 
     if profile is None:
         profile = UserProfile(
             firebase_uid=uid,
-            role="user",               # NEW DEFAULT — not "patient"
-            display_name=firebase_name,
-            email=firebase_email,
+            role="user",
+            display_name=(token_name or None),
+            email=token_email,
         )
         db.add(profile)
         db.commit()
         db.refresh(profile)
-    else:
-        # Sync display_name / email if Firebase has fresher data
-        changed = False
-        if firebase_name and profile.display_name != firebase_name:
-            profile.display_name = firebase_name
-            changed = True
-        if firebase_email and profile.email != firebase_email:
-            profile.email = firebase_email
-            changed = True
-        if changed:
-            db.commit()
-            db.refresh(profile)
+        return profile
 
+    changed = False
+    if token_email and profile.email != token_email:
+        profile.email = token_email
+        changed = True
+    if token_name and not profile.display_name:
+        profile.display_name = token_name
+        changed = True
+    if changed:
+        db.commit()
+        db.refresh(profile)
     return profile
 
 
-def require_roles(*roles: str):
-    """
-    FastAPI dependency factory that enforces role membership.
-    Raises 403 if the current user's role is not in the given set.
-    """
-    role_set = frozenset(roles)
+CurrentUser = Annotated[UserProfile, Depends(get_current_user)]
 
-    unknown = role_set - VALID_ROLES
+
+async def get_optional_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    db: Session = Depends(get_db),
+) -> UserProfile | None:
+    """
+    For public endpoints that show more to signed-in staff. No token → None.
+    A token that is present but invalid is still rejected with 401.
+    """
+    if credentials is None:
+        return None
+    claims = await verify_firebase_token(credentials)
+    return await get_current_user(claims, db)
+
+
+def _forbidden(detail: str = "You do not have permission to perform this action.") -> HTTPException:
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
+def _check_known_permissions(permissions: tuple[str, ...]) -> None:
+    unknown = set(permissions) - ALL_PERMISSIONS
     if unknown:
-        raise ValueError(f"Unknown roles passed to require_roles: {unknown}")
+        raise ValueError(f"Unknown permissions: {sorted(unknown)}")
 
-    async def _check(
-        user: Annotated[UserProfile, Depends(get_current_user)],
-    ) -> UserProfile:
-        if user.role not in role_set:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    f"Access denied. Required role(s): {', '.join(sorted(role_set))}. "
-                    f"Your role: {user.role}."
-                ),
-            )
+
+def require_permission(*permissions: str):
+    """Dependency: the current user's role must hold every listed permission."""
+    _check_known_permissions(permissions)
+
+    async def _check(user: CurrentUser) -> UserProfile:
+        if user.role not in VALID_ROLES or not all(
+            has_permission(user.role, p) for p in permissions
+        ):
+            raise _forbidden()
         return user
 
     return _check
 
 
-async def get_patient_id_for_user(
-    user: Annotated[UserProfile, Depends(get_current_user)],
-) -> int | None:
+def allow_patient_or(*permissions: str):
     """
-    Return the trusted patient_id for the current user.
+    Dependency for endpoints shared by staff and patients.
 
-    - patient-role with linked patient_id → returns patient_id
-    - patient-role with NO patient_id     → returns None (not 403)
-      The caller decides whether to return empty data or create a patient record.
-    - staff roles (admin/doctor/etc.)     → returns None (no ownership filter)
-    - user role                           → raises 403 (no patient access at all)
+    Staff must hold every listed permission. Patient-role users are let through
+    and the endpoint MUST scope its query to their own data. Everyone else
+    (including the default 'user' role and unknown roles) is denied.
     """
-    if user.role == "patient":
-        return user.patient_id  # may be None — callers handle this as "no records yet"
-    if user.role == "user":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account has not been assigned a role. Contact an administrator.",
-        )
-    return None   # staff roles — no filter, see everything
+    _check_known_permissions(permissions)
+
+    async def _check(user: CurrentUser) -> UserProfile:
+        if user.role == "patient":
+            return user
+        if user.role == "user":
+            raise _forbidden(
+                "Your account is waiting for an administrator to assign a role."
+            )
+        if user.role not in VALID_ROLES or not all(
+            has_permission(user.role, p) for p in permissions
+        ):
+            raise _forbidden()
+        return user
+
+    return _check
 
 
-async def get_optional_patient_id(
-    user: Annotated[UserProfile, Depends(get_current_user)],
-) -> int | None:
-    """
-    Like get_patient_id_for_user. Returns None for staff, all patients
-    (linked or unlinked), and user-role accounts that aren't blocked above.
-    Use on endpoints that gracefully handle the no-record state.
-    """
-    if user.role == "patient":
-        return user.patient_id  # may be None
-    return None  # staff roles — no filter
+def require_patient():
+    """Dependency: only patient-role users."""
+
+    async def _check(user: CurrentUser) -> UserProfile:
+        if user.role != "patient":
+            raise _forbidden("This action is only available to patients.")
+        return user
+
+    return _check

@@ -1,31 +1,18 @@
 """
 MediTrack — FastAPI application entry point.
 
-Role-permission matrix applied at the router level:
-┌─────────────────────┬────────┬─────────────┬────────┬────────────┬───────────┬─────────┐
-│ Resource            │ admin  │ receptionist│ doctor │ pharmacist │accountant │ patient │
-├─────────────────────┼────────┼─────────────┼────────┼────────────┼───────────┼─────────┤
-│ Patients (r/w)      │  ✓     │  ✓          │  ✓     │            │           │  own    │
-│ Departments (r/w)   │  ✓     │  ✓(r)       │  ✓(r)  │  ✓(r)     │  ✓(r)     │  ✓(r)  │
-│ Doctors (r/w)       │  ✓     │  ✓(r)       │  ✓(r)  │  ✓(r)     │  ✓(r)     │  ✓(r)  │
-│ Appointments (r/w)  │  ✓     │  ✓          │  ✓(r)  │            │           │  own    │
-│ Medical Records (w) │  ✓     │             │  ✓     │            │           │         │
-│ Medicines (r/w)     │  ✓     │             │  ✓(r)  │  ✓        │           │         │
-│ Prescriptions (r/w) │  ✓     │             │  ✓     │  ✓(r)     │           │         │
-│ Rx Items (r/w)      │  ✓     │             │  ✓     │  ✓        │           │         │
-│ Bills (r/w)         │  ✓     │  ✓          │        │            │  ✓        │  own    │
-└─────────────────────┴────────┴─────────────┴────────┴────────────┴───────────┴─────────┘
-
-(r) = read-only (GET methods only); full = all methods.
-Finer-grained per-patient / per-record scope is enforced in the service layer
-for patient-role users via the query filters.
+Authorization is centralised in app.auth.permissions (role → permission matrix)
+and app.auth.ownership (patient data scoping). See docs/SECURITY.md for the
+full permission matrix.
 """
-import os
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth.firebase import initialize_firebase
+from app.core.config import settings
+from app.core.errors import register_error_handlers
 from app.routes.health import router as health_router
 from app.routes.auth import router as auth_router
 from app.routes.patients import router as patients_router
@@ -38,6 +25,8 @@ from app.routes.prescriptions import router as prescriptions_router
 from app.routes.prescription_items import router as prescription_items_router
 from app.routes.bills import router as bills_router
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
 # ── Bootstrap Firebase Admin SDK ─────────────────────────────────────────────
 initialize_firebase()
 
@@ -45,22 +34,24 @@ initialize_firebase()
 app = FastAPI(
     title="MediTrack API",
     description="Hospital Appointment and Patient Record Management System",
-    version="1.0.0",
+    version="1.1.0",
+    # Interactive docs are a development convenience.
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
-# ── CORS ─────────────────────────────────────────────────────────────────────
-# ALLOWED_ORIGINS is a comma-separated list of allowed origins from env.
-# In development the Vite dev server at localhost:5173 is always allowed.
-# In production set ALLOWED_ORIGINS to your deployed frontend URL.
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
-_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+register_error_handlers(app)
 
+# ── CORS ─────────────────────────────────────────────────────────────────────
+# The API authenticates with bearer tokens, not cookies, so credentials are
+# not allowed cross-origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────
@@ -79,7 +70,4 @@ app.include_router(bills_router)
 
 @app.get("/")
 def root() -> dict[str, str]:
-    return {
-        "message": "Welcome to MediTrack API",
-        "docs": "/docs",
-    }
+    return {"message": "Welcome to MediTrack API"}

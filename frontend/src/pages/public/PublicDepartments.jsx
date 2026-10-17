@@ -1,63 +1,43 @@
-import { useState, useEffect } from 'react'
 import { departmentsApi, doctorsApi } from '../../services/api'
-import { motion } from 'framer-motion'
-import { RiBuildingLine, RiUserStarLine } from 'react-icons/ri'
+import { useAsync } from '../../hooks/useAsync'
+import { ErrorState, LoadingState } from '../../components/ui/States'
+import { doctorName } from '../../utils/format'
+import { PublicPageHeader } from './PublicDoctors'
 
 export default function PublicDepartments() {
-  const [depts, setDepts] = useState([])
-  const [docCounts, setDocCounts] = useState({})
-  const [loading, setLoading] = useState(true)
-  const [available, setAvailable] = useState(true)
-
-  useEffect(() => {
-    Promise.all([departmentsApi.list({ limit: 100 }), doctorsApi.list({ limit: 100 })])
-      .then(([ds, drs]) => {
-        setDepts(ds)
-        const counts = {}
-        drs.forEach((d) => { counts[d.department_id] = (counts[d.department_id] ?? 0) + 1 })
-        setDocCounts(counts)
-      })
-      .catch(() => setAvailable(false))
-      .finally(() => setLoading(false))
-  }, [])
+  const { data, loading, error, reload } = useAsync(() => Promise.all([departmentsApi.listAll(), doctorsApi.listAll()]), [])
+  const [departments, doctors] = data ?? [[], []]
 
   return (
-    <div className="pt-20 min-h-screen">
-      <div className="bg-navy-900 text-white py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h1 className="text-4xl font-bold mb-3">Departments</h1>
-          <p className="text-navy-200">Department data from the MediTrack database.</p>
-        </div>
-      </div>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        {!available && (
-          <div className="mb-6 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm text-center">
-            Backend not running.
-          </div>
-        )}
-        {loading ? (
-          <div className="flex justify-center py-16">
-            <div className="w-8 h-8 border-3 border-navy-200 border-t-navy-700 rounded-full animate-spin" />
-          </div>
+    <>
+      <PublicPageHeader eyebrow="Departments" title="Departments and their doctors">
+        Each department lists the doctors you can book with.
+      </PublicPageHeader>
+      <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+        {loading ? <LoadingState /> : error ? <ErrorState error={error} onRetry={reload} /> : departments.length === 0 ? (
+          <p className="py-12 text-center text-sm text-ink-500">No departments have been published yet.</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {depts.map((dept, i) => (
-              <motion.div key={dept.department_id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-                className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-                <div className="w-12 h-12 rounded-xl bg-teal-100 flex items-center justify-center mb-4">
-                  <RiBuildingLine size={22} className="text-teal-600" />
-                </div>
-                <h3 className="font-semibold text-gray-900 text-lg">{dept.department_name}</h3>
-                {dept.description && <p className="text-sm text-gray-500 mt-1">{dept.description}</p>}
-                <div className="mt-3 flex items-center gap-1.5 text-xs text-gray-500">
-                  <RiUserStarLine size={13} />
-                  <span>{docCounts[dept.department_id] ?? 0} doctor{docCounts[dept.department_id] !== 1 ? 's' : ''}</span>
-                </div>
-              </motion.div>
-            ))}
-          </div>
+          <ul className="divide-y divide-ink-100 border-y border-ink-100">
+            {departments.map((d) => {
+              const team = doctors.filter((doc) => doc.department_id === d.department_id)
+              return (
+                <li key={d.department_id} className="grid gap-3 py-6 md:grid-cols-[16rem_1fr_16rem] md:gap-8">
+                  <h2 className="text-base font-medium">{d.department_name}</h2>
+                  <p className="text-[14px] leading-relaxed text-ink-600">{d.description || 'No description yet.'}</p>
+                  <div>
+                    <p className="eyebrow text-[10.5px]">Doctors</p>
+                    {team.length ? (
+                      <ul className="mt-1.5 space-y-1 text-[13.5px] text-ink-800">
+                        {team.map((doc) => <li key={doc.doctor_id}>{doctorName(doc)}</li>)}
+                      </ul>
+                    ) : <p className="mt-1.5 text-[13.5px] text-ink-500">None listed yet</p>}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         )}
       </div>
-    </div>
+    </>
   )
 }

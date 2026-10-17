@@ -1,13 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_current_user, get_patient_id_for_user, require_roles
+from app.auth.dependencies import allow_patient_or, require_permission
+from app.auth.ownership import is_patient, not_found, owns_appointment
 from app.database.dependencies import get_db
-from app.models.bill import Bill
 from app.models.user_profile import UserProfile
-from app.schemas.bill import BillCreate, BillResponse, BillUpdate
+from app.routes.params import IdPath, IdQuery, Limit, Skip
+from app.schemas.bill import BillCreate, BillResponse, BillUpdate, PaymentStatus
 from app.services.bill_service import (
     create_bill,
     delete_bill,
@@ -16,51 +17,38 @@ from app.services.bill_service import (
     update_bill,
 )
 
-_WRITE_ROLES = require_roles("admin", "receptionist", "accountant")
-_ANY_ALLOWED = require_roles("admin", "receptionist", "accountant", "patient")
-
 router = APIRouter(prefix="/bills", tags=["Bills"])
 
 
 @router.post("/", response_model=BillResponse, status_code=status.HTTP_201_CREATED)
 def create_bill_endpoint(
     data: BillCreate,
-    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
+    _: Annotated[UserProfile, Depends(require_permission("bills:write"))],
     db: Session = Depends(get_db),
-) -> BillResponse:
+):
     return create_bill(db, data)
 
 
 @router.get("/", response_model=list[BillResponse])
 def list_bills_endpoint(
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=100),
-    patient_id: int | None = Query(default=None, gt=0),
-    appointment_id: int | None = Query(default=None, gt=0),
-    payment_status: str | None = Query(
-        default=None,
-        pattern="^(pending|paid|cancelled)$",
-    ),
-    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
-    scoped_patient_id: int | None = Depends(get_patient_id_for_user),
+    current_user: Annotated[UserProfile, Depends(allow_patient_or("bills:read"))],
+    skip: Skip = 0,
+    limit: Limit = 100,
+    patient_id: IdQuery | None = None,
+    appointment_id: IdQuery | None = None,
+    payment_status: PaymentStatus | None = None,
     db: Session = Depends(get_db),
-) -> list[BillResponse]:
-    if current_user.role == "patient":
-        if scoped_patient_id is None:
-            return []  # no patient record yet — empty list, not 403
+):
+    if is_patient(current_user):
+        # patient_id from the query string is ignored for patients.
         return get_bills(
-            db,
-            skip=skip,
-            limit=limit,
-            patient_id=scoped_patient_id,
+            db, skip=skip, limit=limit,
             appointment_id=appointment_id,
             payment_status=payment_status,
+            owner=current_user,
         )
-
     return get_bills(
-        db,
-        skip=skip,
-        limit=limit,
+        db, skip=skip, limit=limit,
         patient_id=patient_id,
         appointment_id=appointment_id,
         payment_status=payment_status,
@@ -69,41 +57,31 @@ def list_bills_endpoint(
 
 @router.get("/{bill_id}", response_model=BillResponse)
 def get_bill_endpoint(
-    bill_id: int,
-    current_user: Annotated[UserProfile, Depends(get_current_user)] = None,
-    scoped_patient_id: int | None = Depends(get_patient_id_for_user),
+    bill_id: IdPath,
+    current_user: Annotated[UserProfile, Depends(allow_patient_or("bills:read"))],
     db: Session = Depends(get_db),
-) -> BillResponse:
-    if current_user.role == "patient" and scoped_patient_id is None:
-        # No patient record yet — cannot own any bill
-        raise HTTPException(status_code=404, detail="Bill not found.")
-
+):
     bill = get_bill(db, bill_id)
-
-    if current_user.role == "patient" and scoped_patient_id is not None and bill.patient_id != scoped_patient_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only access your own bills.",
-        )
-
+    if is_patient(current_user) and not owns_appointment(current_user, bill.appointment):
+        raise not_found("Bill")
     return bill
 
 
 @router.patch("/{bill_id}", response_model=BillResponse)
 def update_bill_endpoint(
-    bill_id: int,
+    bill_id: IdPath,
     data: BillUpdate,
-    _: Annotated[UserProfile, Depends(_WRITE_ROLES)],
+    _: Annotated[UserProfile, Depends(require_permission("bills:write"))],
     db: Session = Depends(get_db),
-) -> BillResponse:
+):
     return update_bill(db, bill_id, data)
 
 
 @router.delete("/{bill_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_bill_endpoint(
-    bill_id: int,
-    _: Annotated[UserProfile, Depends(require_roles("admin"))],
+    bill_id: IdPath,
+    _: Annotated[UserProfile, Depends(require_permission("bills:delete"))],
     db: Session = Depends(get_db),
-) -> Response:
+):
     delete_bill(db, bill_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

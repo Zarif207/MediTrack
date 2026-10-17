@@ -2,14 +2,16 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
-class PrescriptionCreate(BaseModel):
-    record_id: int = Field(gt=0)
-    instructions: str | None = None
+from app.schemas.common import PositiveId, RequestModel, UpdateModel
 
 
-class PrescriptionUpdate(BaseModel):
-    instructions: str | None = None
+class PrescriptionCreate(RequestModel):
+    record_id: PositiveId
+    instructions: str | None = Field(default=None, max_length=2000)
+
+
+class PrescriptionUpdate(UpdateModel):
+    instructions: str | None = Field(default=None, max_length=2000)
 
 
 class PrescriptionResponse(BaseModel):
@@ -19,3 +21,5 @@ class PrescriptionResponse(BaseModel):
     record_id: int
     prescription_date: datetime
     instructions: str | None
+    patient_id: int | None = None
+    patient_name: str | None = None

@@ -1,16 +1,16 @@
-# React + Vite
+# MediTrack frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite 8 + Tailwind CSS 4. See the [root README](../README.md) for setup.
 
-Currently, two official plugins are available:
+```bash
+npm install
+npm run dev      # http://localhost:5173 (proxies /api to the FastAPI server on :8000)
+npm run lint
+npm run build
+```
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- `src/services/api.js` — the only place that calls the API
+- `src/context/AuthContext.jsx` — Firebase session + server profile (role, permissions)
+- `src/config/access.js`, `src/config/navigation.js` — route access and role-aware navigation
+- `src/components/ui/` — design-system components; tokens live in `src/index.css`
+- `src/pages/patient/` — patient views; `src/pages/*.jsx` — staff views; `src/pages/public/` — website

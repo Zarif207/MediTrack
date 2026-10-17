@@ -7,9 +7,28 @@ __pycache__/
 venv/
 env/
 
-# Environment variables
+# Environment variables (examples are safe to commit)
 .env
 .env.*
+!.env.example
+
+# Credentials — never commit service accounts or private keys
+*firebase-adminsdk*.json
+serviceAccount*.json
+service-account*.json
+*.pem
+*.key
+*.p12
+
+# Logs, build output, local databases
+*.log
+dist/
+*.sqlite
+*.sqlite3
+*.db
+coverage/
+htmlcov/
+.coverage
 
 # macOS
 .DS_Store
@@ -22,4 +41,3 @@ env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-

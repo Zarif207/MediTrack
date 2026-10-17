@@ -1,33 +1,113 @@
 @import "tailwindcss";
 
-/* ── MediTrack custom design tokens ── */
+/*
+ * MediTrack design tokens
+ *
+ * Palette: warm paper neutrals with a green-grey ink, one deep "pine" brand
+ * colour for primary actions and active states, and muted status hues.
+ * Radius: 4px controls, 6px buttons/inputs, 8px surfaces. Shadows are
+ * reserved for floating layers (menus, dialogs).
+ */
 @theme {
-  --color-navy-50:  #f0f4ff;
-  --color-navy-100: #e0e9ff;
-  --color-navy-200: #bfcfff;
-  --color-navy-300: #93a8f8;
-  --color-navy-400: #667de8;
-  --color-navy-500: #4a5bcc;
-  --color-navy-600: #3a4aa8;
-  --color-navy-700: #2d3a8c;
-  --color-navy-800: #1e2660;
-  --color-navy-900: #131840;
-  --color-navy-950: #0c1030;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Source Serif 4", ui-serif, Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --color-teal-50:  #f0fdfb;
-  --color-teal-100: #ccfbf4;
-  --color-teal-200: #99f6ea;
-  --color-teal-300: #5eead8;
-  --color-teal-400: #2dd4bf;
-  --color-teal-500: #14b8a6;
-  --color-teal-600: #0d9488;
-  --color-teal-700: #0f766e;
-  --color-teal-800: #115e59;
-  --color-teal-900: #134e4a;
+  /* Neutrals — ink */
+  --color-paper: #f7f7f4;
+  --color-surface: #ffffff;
+  --color-ink-50: #f2f3f0;
+  --color-ink-100: #e6e8e3;
+  --color-ink-200: #d3d6cf;
+  --color-ink-300: #b4b9b0;
+  --color-ink-400: #8a9087;
+  --color-ink-500: #676d65;
+  --color-ink-600: #4f554e;
+  --color-ink-700: #3b403a;
+  --color-ink-800: #262a26;
+  --color-ink-900: #181b18;
+
+  /* Brand — pine */
+  --color-pine-50: #eef5f2;
+  --color-pine-100: #d6e8e0;
+  --color-pine-200: #aed1c2;
+  --color-pine-300: #7fb39f;
+  --color-pine-400: #4f9079;
+  --color-pine-500: #2f735d;
+  --color-pine-600: #225f4c;
+  --color-pine-700: #1b4d3e;
+  --color-pine-800: #163d32;
+  --color-pine-900: #102c25;
+
+  /* Status */
+  --color-info-50: #eef3f8;
+  --color-info-700: #2f4f6e;
+  --color-warn-50: #fbf4e6;
+  --color-warn-700: #8a5a0b;
+  --color-danger-50: #fbefec;
+  --color-danger-600: #b23a2a;
+  --color-danger-700: #932f22;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --shadow-float: 0 1px 2px rgb(24 27 24 / 0.06), 0 8px 24px -6px rgb(24 27 24 / 0.16);
 }
 
-html {
-  scroll-behavior: smooth;
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-paper text-ink-900 font-sans antialiased;
+    font-feature-settings: "tnum" 1, "cv11" 1;
+  }
+
+  h1, h2, h3, h4 {
+    @apply text-ink-900;
+    text-wrap: balance;
+  }
+
+  ::selection {
+    @apply bg-pine-100 text-pine-900;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-pine-500);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  input, select, textarea, button {
+    font: inherit;
+  }
+}
+
+@layer components {
+  /* Shared control surface for inputs, selects and textareas. */
+  .control {
+    @apply w-full rounded-md border border-ink-200 bg-surface px-3 py-2 text-sm text-ink-900
+      placeholder:text-ink-400 transition-colors duration-100
+      hover:border-ink-300
+      focus:border-pine-500 focus:outline-none focus:ring-2 focus:ring-pine-100
+      disabled:cursor-not-allowed disabled:bg-ink-50 disabled:text-ink-500;
+  }
+
+  .control[aria-invalid="true"] {
+    @apply border-danger-600 focus:ring-danger-50;
+  }
+
+  .eyebrow {
+    @apply text-xs font-medium uppercase tracking-[0.08em] text-ink-500;
+  }
+
+  .link {
+    @apply font-medium text-pine-700 underline decoration-pine-200 underline-offset-4
+      hover:decoration-pine-600;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -38,19 +118,4 @@ html {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  html {
-    scroll-behavior: auto;
-  }
-}
-
-/* Thin custom scrollbar for sidebar */
-.sidebar-scroll::-webkit-scrollbar {
-  width: 4px;
-}
-.sidebar-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.sidebar-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.15);
-  border-radius: 2px;
 }

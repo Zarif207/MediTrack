@@ -3,13 +3,20 @@ from datetime import datetime
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
+from app.auth.ownership import owned_appointment_clause
 from app.models.appointment import Appointment
 from app.models.medical_record import MedicalRecord
+from app.models.user_profile import UserProfile
 from app.schemas.medical_record import (
     MedicalRecordCreate,
     MedicalRecordUpdate,
+)
+
+_APPOINTMENT_DETAILS = (
+    selectinload(MedicalRecord.appointment).selectinload(Appointment.patient),
+    selectinload(MedicalRecord.appointment).selectinload(Appointment.booker),
 )
 
 
@@ -23,6 +30,21 @@ def create_medical_record(
         raise HTTPException(
             status_code=404,
             detail="Appointment not found.",
+        )
+
+    if appointment.patient_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Associate this appointment with a patient record before "
+                "adding a medical record."
+            ),
+        )
+
+    if appointment.status in ("cancelled", "no_show"):
+        raise HTTPException(
+            status_code=409,
+            detail="Medical records cannot be added to cancelled or no-show appointments.",
         )
 
     if appointment.medical_record is not None:
@@ -59,10 +81,19 @@ def get_medical_records(
     skip: int = 0,
     limit: int = 20,
     appointment_id: int | None = None,
+    owner: UserProfile | None = None,
 ) -> list[MedicalRecord]:
-    statement = select(MedicalRecord).order_by(
-        MedicalRecord.record_id
+    """List records. When `owner` is given, only that patient's are returned."""
+    statement = (
+        select(MedicalRecord)
+        .options(*_APPOINTMENT_DETAILS)
+        .order_by(MedicalRecord.record_id)
     )
+
+    if owner is not None:
+        statement = statement.join(
+            Appointment, MedicalRecord.appointment_id == Appointment.appointment_id
+        ).where(owned_appointment_clause(owner))
 
     if appointment_id is not None:
         statement = statement.where(
@@ -86,13 +117,7 @@ def update_medical_record(
     record: MedicalRecord,
     data: MedicalRecordUpdate,
 ) -> MedicalRecord:
-    changes = data.model_dump(exclude_unset=True)
-
-    if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide at least one field to update.",
-        )
+    changes = data.changes()
 
     for field, value in changes.items():
         setattr(record, field, value)

@@ -1,11 +1,15 @@
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
+from app.auth.ownership import owned_appointment_clause
+from app.models.appointment import Appointment
+from app.models.medical_record import MedicalRecord
 from app.models.medicine import Medicine
 from app.models.prescription import Prescription
 from app.models.prescription_item import PrescriptionItem
+from app.models.user_profile import UserProfile
 from app.schemas.prescription_item import (
     PrescriptionItemCreate,
     PrescriptionItemUpdate,
@@ -55,10 +59,22 @@ def get_prescription_items(
     skip: int = 0,
     limit: int = 20,
     prescription_id: int | None = None,
+    owner: UserProfile | None = None,
 ) -> list[PrescriptionItem]:
-    statement = select(PrescriptionItem).order_by(
-        PrescriptionItem.prescription_item_id
+    """List items. When `owner` is given, only that patient's are returned."""
+    statement = (
+        select(PrescriptionItem)
+        .options(selectinload(PrescriptionItem.medicine))
+        .order_by(PrescriptionItem.prescription_item_id)
     )
+
+    if owner is not None:
+        statement = (
+            statement.join(Prescription, PrescriptionItem.prescription_id == Prescription.prescription_id)
+            .join(MedicalRecord, Prescription.record_id == MedicalRecord.record_id)
+            .join(Appointment, MedicalRecord.appointment_id == Appointment.appointment_id)
+            .where(owned_appointment_clause(owner))
+        )
 
     if prescription_id is not None:
         statement = statement.where(
@@ -79,19 +95,8 @@ def update_prescription_item(
     item: PrescriptionItem,
     data: PrescriptionItemUpdate,
 ) -> PrescriptionItem:
-    changes = data.model_dump(exclude_unset=True)
+    changes = data.changes()
 
-    if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide at least one field to update.",
-        )
-
-    if any(value is None for value in changes.values()):
-        raise HTTPException(
-            status_code=422,
-            detail="Prescription item fields cannot be null.",
-        )
 
     for field, value in changes.items():
         setattr(item, field, value)

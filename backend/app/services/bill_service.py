@@ -6,9 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth.ownership import owned_appointment_clause
 from app.models.appointment import Appointment
 from app.models.bill import Bill
 from app.models.patient import Patient
+from app.models.user_profile import UserProfile
 from app.schemas.bill import BillCreate, BillUpdate
 
 
@@ -25,6 +27,21 @@ def create_bill(db: Session, data: BillCreate) -> Bill:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Appointment not found",
+        )
+
+    if appointment.patient_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Associate this appointment with a patient record before "
+                "issuing a bill."
+            ),
+        )
+
+    if appointment.status in ("cancelled", "no_show"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bills cannot be issued for cancelled or no-show appointments.",
         )
 
     if appointment.patient_id != data.patient_id:
@@ -76,8 +93,15 @@ def get_bills(
     patient_id: int | None = None,
     appointment_id: int | None = None,
     payment_status: str | None = None,
+    owner: UserProfile | None = None,
 ) -> list[Bill]:
+    """List bills. When `owner` is given, only that patient's are returned."""
     query = select(Bill)
+
+    if owner is not None:
+        query = query.join(
+            Appointment, Bill.appointment_id == Appointment.appointment_id
+        ).where(owned_appointment_clause(owner))
 
     if patient_id is not None:
         query = query.where(Bill.patient_id == patient_id)
@@ -106,19 +130,7 @@ def get_bill(db: Session, bill_id: int) -> Bill:
 
 def update_bill(db: Session, bill_id: int, data: BillUpdate) -> Bill:
     bill = get_bill(db, bill_id)
-    updates = data.model_dump(exclude_unset=True)
-
-    if "amount" in updates and updates["amount"] is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Amount cannot be null",
-        )
-
-    if "payment_status" in updates and updates["payment_status"] is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Payment status cannot be null",
-        )
+    updates = data.changes()
 
     if updates.get("payment_status") == "paid":
         if bill.payment_status != "paid":
@@ -145,4 +157,11 @@ def update_bill(db: Session, bill_id: int, data: BillUpdate) -> Bill:
 def delete_bill(db: Session, bill_id: int) -> None:
     bill = get_bill(db, bill_id)
     db.delete(bill)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete this bill because related records exist.",
+        ) from exc

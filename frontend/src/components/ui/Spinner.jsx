@@ -1,19 +1,9 @@
 export default function Spinner({ size = 'md', className = '' }) {
-  const s = { sm: 'w-4 h-4 border-2', md: 'w-8 h-8 border-3', lg: 'w-12 h-12 border-4' }
+  const s = { sm: 'h-3.5 w-3.5 border-2', md: 'h-5 w-5 border-2', lg: 'h-7 w-7 border-[3px]' }
   return (
-    <div
-      className={`${s[size] ?? s.md} border-navy-200 border-t-navy-700 rounded-full animate-spin ${className}`}
-      role="status"
-      aria-label="Loading"
+    <span
+      aria-hidden
+      className={`inline-block animate-spin rounded-full border-current border-r-transparent opacity-70 ${s[size]} ${className}`}
     />
-  )
-}
-
-export function PageLoader() {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-64 gap-3 text-gray-500">
-      <Spinner size="lg" />
-      <p className="text-sm">Loading…</p>
-    </div>
   )
 }

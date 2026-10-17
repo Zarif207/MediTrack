@@ -56,13 +56,7 @@ def update_doctor(
     doctor: Doctor,
     data: DoctorUpdate,
 ) -> Doctor:
-    changes = data.model_dump(exclude_unset=True)
-
-    if not changes:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide at least one field to update.",
-        )
+    changes = data.changes()
 
     if "department_id" in changes and changes["department_id"] is not None:
         department = db.get(Department, changes["department_id"])
