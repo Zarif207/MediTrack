@@ -73,6 +73,7 @@ python migrate_add_patient_link.py
 python migrate_appointments_firebase_uid.py
 python migrate_appointment_ownership.py    # nullable appointments.patient_id + integrity guards
 python migrate_add_doctor_link.py          # user_profiles.doctor_id (doctor accounts → doctor records)
+python migrate_add_stripe_payments.py      # bill_payments + stripe_events (online payment)
 ```
 
 `create_all()` never alters existing tables — editing a model does not change a live database.
@@ -149,7 +150,15 @@ permissions, SQL, constraints) runs for real.
 Online booking offers 30-minute slots 09:00–17:00, from now up to 180 days ahead. Staff can schedule
 any time. See [docs/SECURITY.md](docs/SECURITY.md) for the full rules.
 
-## 5. Known limitations
+## 5. Online payment (Stripe Checkout, test mode)
+
+Patients pay their own pending bills, and billing staff can start payment for any pending bill,
+via **Pay with Stripe** on the Overview and Bills pages. The server creates the Checkout Session
+from the bill's amount and marks the bill paid **only** after a signature-verified webhook
+(or a server-side check with Stripe) confirms payment. See [docs/PAYMENTS.md](docs/PAYMENTS.md)
+for configuration and local testing with the Stripe CLI.
+
+## 6. Known limitations
 
 - No per-doctor working hours or leave; one clinic-wide booking window applies.
 - No rate limiting on the API (the client handles `429` if a proxy adds it).

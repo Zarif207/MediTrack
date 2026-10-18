@@ -7,10 +7,13 @@ import DataTable from '../../components/ui/DataTable'
 import StatusBadge from '../../components/ui/StatusBadge'
 import { EmptyState } from '../../components/ui/States'
 import { formatCurrency, formatDate } from '../../utils/format'
+import { PendingPayments } from '../../components/billing/BillingGroups'
+import PaymentReturnNotice from '../../components/billing/PaymentReturnNotice'
 
 export default function MyBills() {
-  const { data, loading, error, reload } = useAsync(() => billsApi.listAll(), [])
-  const bills = [...(data ?? [])].sort((a, b) => b.issued_at.localeCompare(a.issued_at))
+  const { data, loading, error, reload } = useAsync(() => Promise.all([billsApi.listAll(), billsApi.summary()]), [])
+  const [allBills, summary] = data ?? [[], null]
+  const bills = [...allBills].sort((a, b) => b.issued_at.localeCompare(a.issued_at))
   const outstanding = bills
     .filter((b) => b.payment_status === 'pending')
     .reduce((sum, b) => sum + Number.parseFloat(b.amount), 0)
@@ -18,6 +21,7 @@ export default function MyBills() {
   return (
     <>
       <PageHeader title="Bills" description="Charges for your visits and their payment status." />
+      <PaymentReturnNotice onConfirmed={reload} />
       {!loading && !error && bills.length > 0 && (
         <div className="mb-6 grid gap-3 sm:grid-cols-2">
           <div className="rounded-lg border border-ink-100 bg-surface px-4 py-3.5">
@@ -30,7 +34,12 @@ export default function MyBills() {
           </div>
         </div>
       )}
-      <Panel>
+      {summary && summary.pending.length > 0 && (
+        <div className="mb-6">
+          <PendingPayments summary={summary} canPay showPatient={false} title="Awaiting payment" />
+        </div>
+      )}
+      <Panel title="Payment history">
         <DataTable
           caption="Your bills"
           loading={loading}

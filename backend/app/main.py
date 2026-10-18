@@ -24,6 +24,7 @@ from app.routes.medicines import router as medicines_router
 from app.routes.prescriptions import router as prescriptions_router
 from app.routes.prescription_items import router as prescription_items_router
 from app.routes.bills import router as bills_router
+from app.routes.payments import router as payments_router
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -66,6 +67,7 @@ app.include_router(medicines_router)
 app.include_router(prescriptions_router)
 app.include_router(prescription_items_router)
 app.include_router(bills_router)
+app.include_router(payments_router)
 
 
 @app.get("/")

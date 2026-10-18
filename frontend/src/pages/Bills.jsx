@@ -16,6 +16,8 @@ import FormModal from '../components/ui/FormModal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
 import { FieldGrid, Input, Select } from '../components/ui/Field'
 import { EmptyState } from '../components/ui/States'
+import { FullyPaid, PendingPayments, PendingReminder } from '../components/billing/BillingGroups'
+import PaymentReturnNotice from '../components/billing/PaymentReturnNotice'
 import { formatCurrency, formatDate, formatTime, fullName, plural } from '../utils/format'
 
 const STATUSES = { pending: 'Pending', paid: 'Paid', cancelled: 'Cancelled' }
@@ -32,8 +34,9 @@ export default function Bills() {
     billsApi.listAll(),
     can('patients:read') ? optional(patientsApi.listAll()) : [],
     can('appointments:read') ? optional(appointmentsApi.listAll()) : [],
+    billsApi.summary(),
   ]), [])
-  const [bills, patients, appointments] = data ?? [[], [], []]
+  const [bills, patients, appointments, summary] = data ?? [[], [], [], null]
   const patientById = useMemo(() => Object.fromEntries(patients.map((p) => [p.patient_id, p])), [patients])
 
   const [search, setSearch] = useState('')
@@ -115,6 +118,8 @@ export default function Bills() {
     <>
       <PageHeader title="Bills" description="One bill per appointment. Marking a bill paid records the payment time."
         actions={canWrite && <Button icon={RiAddLine} onClick={() => openForm('new')}>Issue bill</Button>} />
+      <PaymentReturnNotice onConfirmed={reload} />
+      {summary && <PendingReminder summary={summary} />}
       {!loading && !error && bills.length > 0 && (
         <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
           {Object.entries(STATUSES).map(([k, label]) => (
@@ -125,7 +130,13 @@ export default function Bills() {
           ))}
         </div>
       )}
-      <Panel>
+      {summary && (
+        <div className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <PendingPayments summary={summary} canPay={canWrite} />
+          <FullyPaid summary={summary} />
+        </div>
+      )}
+      <Panel title="All bills">
         <Toolbar count={!loading && !error ? plural(rows.length, 'bill') : undefined}>
           <SearchInput value={search} onChange={setSearch} placeholder="Patient, bill # or appointment #" className="sm:w-80" />
           <FilterSelect label="Payment status" value={status} onChange={setStatus}>

@@ -2,6 +2,7 @@
 // Auth Emulator) → FastAPI (Admin SDK on the Auth Emulator) → meditrack_db_test.
 // See e2e/README.md. No production services are contacted.
 import { execFileSync } from 'node:child_process'
+import { createHmac } from 'node:crypto'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -175,6 +176,8 @@ await go('/dashboard')
 await waitFor(textOnPage('Book appointment'), 'patient navigation')
 check(await js(textOnPage('My appointments')) && !(await js(textOnPage('Users & roles'))), 'patient sees patient navigation only')
 check(await js(textOnPage('Back to home')), 'sidebar shows "Back to home"')
+const order = (root) => `[...document.querySelectorAll('${root} nav[aria-label=Main] a')].slice(0, 2).map(a => a.textContent.trim()).join(' > ')`
+check((await js(order('aside'))) === 'Back to home > Overview', `desktop sidebar starts with "Back to home" directly above "Overview" [${await js(order('aside'))}]`)
 
 // Homepage while signed in as a patient.
 await go('/')
@@ -221,6 +224,80 @@ check((await (await api('/appointments/', other.idToken)).json()).length === 0, 
 check((await api('/patients/', other.idToken)).status === 200 && (await (await api('/patients/', other.idToken)).json()).length === 0, 'patient directory is not exposed')
 check((await api('/medicines/', other.idToken)).status === 403, 'patient denied staff endpoint (403)')
 
+// 5b. Billing and Stripe Checkout (Stripe API faked in the launcher; signatures real).
+const WHSEC = 'whsec_e2e_meditrack'
+async function webhook(evt) {
+  const body = JSON.stringify(evt)
+  const t = Math.floor(Date.now() / 1000)
+  const v1 = createHmac('sha256', WHSEC).update(`${t}.${body}`).digest('hex')
+  const r = await fetch(`${API}/payments/stripe/webhook`, { method: 'POST', body, headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${t},v1=${v1}` } })
+  return { status: r.status, body: await r.json() }
+}
+const stripeEvent = (id, type, sid, amount) => ({ id, object: 'event', type, created: Math.floor(Date.now() / 1000), livemode: false,
+  data: { object: { id: sid, object: 'checkout.session', status: 'complete', payment_status: 'paid', amount_total: amount, currency: 'usd', payment_intent: 'pi_e2e' } } })
+
+// Staff identify the patient: create a file, link the account, then issue a bill.
+const file = await (await api('/patients/', admin.idToken, { method: 'POST', body: JSON.stringify({ first_name: 'Erin', last_name: 'Example', date_of_birth: '1990-02-03', gender: 'Female', phone: '+1 555 0199' }) })).json()
+await api(`/auth/users/${patientUid}/link-patient`, admin.idToken, { method: 'PATCH', body: JSON.stringify({ patient_id: file.patient_id }) })
+const billRes = await api('/bills/', admin.idToken, { method: 'POST', body: JSON.stringify({ patient_id: file.patient_id, appointment_id: mine.appointment_id, amount: '45.00' }) })
+const bill = await billRes.json()
+check(billRes.status === 201, `staff issue a 45.00 bill for the booking (HTTP ${billRes.status})`)
+
+await go('/dashboard')
+await waitFor(textOnPage('Bills to pay'), 'overview pending payments')
+check(await js(textOnPage('Bills to pay')) && await js(textOnPage('Pay with Stripe')), 'patient Overview shows the pending bill with "Pay with Stripe"')
+await go('/bills')
+await waitFor(textOnPage('Awaiting payment'), 'patient bills pending section')
+check(await js(textOnPage('Awaiting payment')) && await js(textOnPage('Payment history')), 'patient Bills page groups pending and history')
+await shot('patient-pending')
+
+// Click Pay: capture the redirect to Stripe and block it (no real Stripe page is loaded).
+await send('Fetch.enable', { patterns: [{ urlPattern: 'https://checkout.stripe.com/*' }] })
+let checkoutUrl = null
+const onPaused = (e) => {
+  const m = JSON.parse(e.data)
+  if (m.method === 'Fetch.requestPaused') { checkoutUrl = m.params.request.url; ws.send(JSON.stringify({ id: ++id, method: 'Fetch.failRequest', params: { requestId: m.params.requestId, errorReason: 'Aborted' } })) }
+}
+ws.addEventListener('message', onPaused)
+await clickText('Pay with Stripe', 'button')
+const until = Date.now() + 10000
+while (!checkoutUrl && Date.now() < until) await sleep(100)
+ws.removeEventListener('message', onPaused)
+await send('Fetch.disable')
+check(Boolean(checkoutUrl?.startsWith('https://checkout.stripe.com/c/pay/cs_test_')), `"Pay with Stripe" redirects to Stripe Checkout [${checkoutUrl?.slice(0, 60)}]`)
+const sid = checkoutUrl?.split('/').pop()
+check((await (await api(`/bills/${bill.bill_id}`, other.idToken)).status) === 404, "another patient cannot see this bill")
+check((await (await api(`/bills/${bill.bill_id}/checkout`, other.idToken, { method: 'POST' })).status) === 404, "another patient cannot start checkout for it")
+check((await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()).payment_status === 'pending', 'starting checkout does not mark the bill paid')
+
+// Cancelled on Stripe → back to /bills, nothing changes.
+await go(`/bills?payment=cancelled&bill=${bill.bill_id}`)
+await waitFor(textOnPage('Payment cancelled'), 'cancel notice')
+check(await js(textOnPage('Nothing was charged')), 'cancel return explains nothing was charged')
+// Forged "success" return without Stripe confirmation → not paid.
+await go(`/bills?payment=success&session_id=${sid}`)
+await sleep(2500)
+check(!(await js(textOnPage('Payment received'))) && (await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()).payment_status === 'pending',
+  'success URL alone does not mark the bill paid')
+
+// Stripe confirms via signed webhook; a duplicate delivery is ignored.
+const w1 = await webhook(stripeEvent('evt_e2e_1', 'checkout.session.completed', sid, 4500))
+check(w1.status === 200 && w1.body.outcome === 'paid', `verified webhook marks the bill paid (${w1.body.outcome})`)
+const w2 = await webhook(stripeEvent('evt_e2e_1', 'checkout.session.completed', sid, 4500))
+check(w2.body.outcome === 'duplicate_event', 'duplicate webhook delivery is ignored')
+const forged = await fetch(`${API}/payments/stripe/webhook`, { method: 'POST', body: '{}', headers: { 'Stripe-Signature': 't=1,v1=bad' } })
+check(forged.status === 400, 'webhook with a bad signature is rejected (400)')
+await go(`/bills?payment=success&session_id=${sid}`)
+await waitFor(textOnPage('Payment received'), 'success notice')
+check(await js(textOnPage('Payment received')), 'return page confirms the payment')
+const paidBill = await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()
+check(paidBill.payment_status === 'paid' && paidBill.payment_method === 'Card (Stripe)', 'bill is paid by Stripe card')
+check(!(await js(textOnPage('Awaiting payment'))), 'patient Bills page no longer lists it as pending')
+const summary = await (await api('/bills/summary', admin.idToken)).json()
+check(summary.fully_paid.some((p) => p.patient_id === file.patient_id) && !summary.pending.some((b) => b.bill_id === bill.bill_id),
+  'staff summary moves the patient to "Fully paid"')
+check((await api(`/bills/${bill.bill_id}/checkout`, admin.idToken, { method: 'POST' })).status === 409, 'a paid bill cannot be checked out again')
+
 // 6. Back to home keeps the session, and returning works (no loop).
 await go('/appointments')
 await waitFor(textOnPage('Back to home'), 'sidebar link')
@@ -239,6 +316,7 @@ await waitFor(`!!document.querySelector('[aria-label="Open navigation"]')`, 'mob
 await js(`document.querySelector('[aria-label="Open navigation"]').click()`)
 await waitFor(`[...document.querySelectorAll('[role=dialog] a')].some(a => a.textContent.trim() === 'Back to home')`, 'drawer link')
 await shot('mobile-drawer')
+check((await js(order('[role=dialog]'))) === 'Back to home > Overview', `mobile drawer starts with "Back to home" directly above "Overview" [${await js(order('[role=dialog]'))}]`)
 await js(`[...document.querySelectorAll('[role=dialog] a')].find(a => a.textContent.trim() === 'Back to home').click()`)
 await waitFor(`location.pathname === '/'`, 'home from mobile drawer')
 check((await path()) === '/', '"Back to home" works from the mobile drawer')
@@ -286,6 +364,23 @@ check(!(await (await api('/appointments/', doc.idToken)).json()).some((a) => a.a
 await go('/dashboard')
 await waitFor(textOnPage('Back to home'), 'doctor sidebar')
 check(await js(textOnPage('Back to home')), 'doctor sidebar shows "Back to home"')
+check((await js(order('aside'))) === 'Back to home > Overview', 'doctor sidebar: "Back to home" above "Overview"')
+
+// 10. Staff billing view: sign in as the admin through the UI.
+await js(`document.querySelector('[aria-haspopup=menu]').click()`)
+await clickText('Sign out', 'button')
+await waitFor(`location.pathname === '/'`, 'signed out')
+await go('/auth/sign-in')
+await typeInto('input[type="email"]', `admin-${stamp}@example.com`)
+await typeInto('input[autocomplete="current-password"]', PASSWORD)
+await clickText('Sign in', 'button')
+await waitFor(`location.pathname === '/dashboard' && ${textOnPage('Fully paid')}`, 'admin overview billing')
+check(await js(textOnPage('Pending payments')) && await js(textOnPage('Fully paid')), 'staff Overview shows "Pending payments" and "Fully paid"')
+check(await js(`[...document.querySelectorAll('section')].some(s => s.innerText.startsWith('Fully paid') && s.innerText.includes('Erin Example'))`), 'the paid patient is listed under "Fully paid"')
+await go('/bills')
+await waitFor(textOnPage('Fully paid') + ' && ' + textOnPage('Pending payments'), 'staff bills grouping')
+check(await js(textOnPage('Pending payments')) && await js(textOnPage('Fully paid')) && await js(textOnPage('All bills')), 'staff Bills page shows the same grouping')
+await shot('staff-bills')
 
 check(pageErrors.length === 0, `no uncaught page errors${pageErrors.length ? `: ${pageErrors.join('; ')}` : ''}`)
 ws.close()

@@ -32,6 +32,13 @@ if test.database == dev.database or not test.database.endswith("_test"):
     sys.exit("Refusing to run: the database must be a *_test database.")
 settings.database_url = test.render_as_string(hide_password=False)
 
+if os.getenv("E2E_FAKE_STRIPE"):
+    import stripe  # noqa: E402
+
+    import fake_stripe  # noqa: E402
+
+    fake_stripe.install(settings, stripe)
+
 import uvicorn  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
@@ -53,5 +60,5 @@ from seed import seed  # noqa: E402
 Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 seed(engine)
-print(f"E2E API on :{PORT}, {test.database} (emulator {os.environ['FIREBASE_AUTH_EMULATOR_HOST']})", flush=True)
+print(f"E2E API on :{PORT}, {test.database}, fake Stripe={bool(os.getenv('E2E_FAKE_STRIPE'))} (emulator {os.environ['FIREBASE_AUTH_EMULATOR_HOST']})", flush=True)
 uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

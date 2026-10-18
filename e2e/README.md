@@ -21,7 +21,7 @@ Four terminals, from the repository root:
 npx firebase-tools@15.34.0 emulators:start --only auth --project meditrack-7fe46
 
 # 2. API on the test database, verifying emulator tokens
-cd backend && FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 .venv/bin/python ../e2e/start_backend.py
+cd backend && E2E_FAKE_STRIPE=1 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 .venv/bin/python ../e2e/start_backend.py
 
 # 3. App with the Web SDK pointed at the emulator
 cd frontend && VITE_FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 VITE_API_BASE_URL=http://127.0.0.1:8001 npx vite --port 5174
@@ -33,7 +33,7 @@ FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 node e2e/run.mjs
 
 Set `E2E_SHOTS=/some/dir` to save screenshots.
 
-## What it covers (68 checks)
+## What it covers (91 checks)
 
 Homepage, signed out and signed in: every link and CTA lands on the right route, all photos load with alt text, one h1, no overflow, mobile header and menu. Sign-up through the UI → *Awaiting access*; admin assigns the patient role; booking with no patient
 file; the booking is listed and survives a reload; it is stored against the account UID; another
@@ -43,6 +43,12 @@ page signed out; protected pages then redirect to sign-in; sign-in through the U
 requested page; an unlinked doctor sees no appointments or records and is told why; doctor navigation
 has no admin or billing pages; a linked doctor sees their own appointment and loses it when re-linked
 to another doctor record; no uncaught page errors.
+
+`E2E_FAKE_STRIPE=1` replaces Stripe's API calls with `fake_stripe.py` (no network, test key only).
+Webhook signatures are still verified by the real code: `run.mjs` signs events with the fake's secret.
+The payment checks cover Pay → redirect to `checkout.stripe.com` (intercepted, never loaded), cancel and
+success returns, signed and forged webhooks, duplicates, and the staff "Pending payments" / "Fully paid"
+groups. For a real Stripe test-mode run see `docs/PAYMENTS.md`.
 
 ## Emulator limitations
 

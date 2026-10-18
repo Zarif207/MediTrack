@@ -185,4 +185,13 @@ export const medicalRecordsApi = resource('/medical-records/')
 export const medicinesApi = resource('/medicines/')
 export const prescriptionsApi = resource('/prescriptions/')
 export const prescriptionItemsApi = resource('/prescription-items/')
-export const billsApi = resource('/bills/')
+export const billsApi = {
+  ...resource('/bills/'),
+  summary: () => get('/bills/summary'),
+  /** Server creates (or reuses) a Stripe Checkout Session; returns { checkout_url }. */
+  checkout: (id) => post(`/bills/${id}/checkout`),
+}
+export const paymentsApi = {
+  /** Asks the server whether Stripe has confirmed a checkout. */
+  sessionStatus: (sessionId) => get(`/payments/stripe/sessions/${encodeURIComponent(sessionId)}`),
+}

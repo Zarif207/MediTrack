@@ -53,3 +53,6 @@ python-multipart==0.0.20
 requests==2.34.2
 uritemplate==4.2.0
 urllib3==2.8.0
+
+# ── Payments (Stripe Checkout, test mode) ──
+stripe==15.6.1

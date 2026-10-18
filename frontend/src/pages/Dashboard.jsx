@@ -14,6 +14,7 @@ import Button from '../components/ui/Button'
 import StatusBadge from '../components/ui/StatusBadge'
 import { EmptyState, ErrorState, LoadingState, Alert } from '../components/ui/States'
 import { AppointmentRow } from './patient/MyAppointments'
+import { FullyPaid, PendingPayments } from '../components/billing/BillingGroups'
 import {
   doctorName, formatCurrency, formatDate, formatTime, isUpcoming, plural, todayISO,
 } from '../utils/format'
@@ -95,8 +96,9 @@ function PatientDashboard() {
     medicalRecordsApi.listAll(),
     prescriptionsApi.listAll(),
     billsApi.listAll(),
+    billsApi.summary(),
   ]), [])
-  const [appts, doctors, records, prescriptions, bills] = data ?? [[], [], [], [], []]
+  const [appts, doctors, records, prescriptions, bills, billSummary] = data ?? [[], [], [], [], [], null]
   const doctorById = Object.fromEntries(doctors.map((d) => [d.doctor_id, d]))
 
   const upcoming = appts
@@ -134,6 +136,11 @@ function PatientDashboard() {
                   action={<Button size="sm" to="/patient/book-appointment">Book appointment</Button>} />
               )}
             </Panel>
+
+            {billSummary && (billSummary.pending.length > 0 || bills.length > 0) && (
+              <PendingPayments summary={billSummary} canPay showPatient={false} title="Bills to pay"
+                action={<Link to="/bills" className="link text-[13px]">All bills</Link>} />
+            )}
 
             {latestRecord && (
               <Panel title="Latest visit record" description={formatDate(latestRecord.record_date)}
@@ -178,7 +185,8 @@ function StaffDashboard() {
       can('medicines:read') ? medicinesApi.listAll() : null,
       can('prescriptions:read') ? prescriptionsApi.listAll() : null,
     ])
-    return { appts, doctors, patients, pendingBills, medicines, prescriptions }
+    const billSummary = can('bills:read') ? await billsApi.summary() : null
+    return { appts, doctors, patients, pendingBills, medicines, prescriptions, billSummary }
   }, [role])
 
   const d = data ?? {}
@@ -251,6 +259,14 @@ function StaffDashboard() {
                 <EmptyState compact icon={RiCalendarCheckLine} title="No appointments today" />
               )}
             </Panel>
+          )}
+
+          {d.billSummary && (
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+              <PendingPayments summary={d.billSummary} canPay={can('bills:write')} limit={6}
+                action={<Link to="/bills" className="link text-[13px]">All bills</Link>} />
+              <FullyPaid summary={d.billSummary} limit={6} />
+            </div>
           )}
 
           {lowStock.length > 0 && (
