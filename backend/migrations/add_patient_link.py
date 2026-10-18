@@ -12,7 +12,7 @@ Design choices:
   A patient-role user cannot self-assign a patient_id.
 
 Run once from backend/ with the virtual environment activated:
-    python migrate_add_patient_link.py
+    python -m migrations.add_patient_link
 
 Idempotent — running it multiple times is safe.
 """

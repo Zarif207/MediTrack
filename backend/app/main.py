@@ -2,8 +2,8 @@
 MediTrack — FastAPI application entry point.
 
 Authorization is centralised in app.auth.permissions (role → permission matrix)
-and app.auth.ownership (patient data scoping). See docs/SECURITY.md for the
-full permission matrix.
+and app.auth.ownership (patient data scoping). The permission matrix is
+summarised in the root README.
 """
 import logging
 

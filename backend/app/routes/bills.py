@@ -1,20 +1,18 @@
+from datetime import datetime
 from typing import Annotated
 
-from datetime import datetime
-
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth.dependencies import allow_patient_or, require_patient, require_permission
-from app.auth.ownership import is_patient, not_found, owns_appointment
+from app.auth.ownership import is_patient, not_found, owned_appointment_clause, owns_appointment
 from app.database.dependencies import get_db
-from app.models.user_profile import UserProfile
-from app.routes.params import IdPath, IdQuery, Limit, Skip
-from app.auth.ownership import owned_appointment_clause
 from app.models.appointment import Appointment
 from app.models.bill import Bill
 from app.models.payment import BillPayment
+from app.models.user_profile import UserProfile
+from app.routes.params import IdPath, IdQuery, Limit, Skip
 from app.schemas.bill import (
     BillCreate, BillResponse, BillSummary, BillUpdate, CheckoutResponse, PaymentStatus,
 )
@@ -79,7 +77,7 @@ def bill_summary(
     open_ids = set(db.scalars(
         select(BillPayment.bill_id).where(
             BillPayment.status == "open", BillPayment.expires_at > datetime.now(),
-            BillPayment.bill_id.in_([b.bill_id for b in bills]) if bills else False,
+            BillPayment.bill_id.in_([b.bill_id for b in bills]),
         )
     ).all()) if bills else set()
     return payment_service.summarise(bills, open_ids)
@@ -123,8 +121,18 @@ def update_bill_endpoint(
     _: Annotated[UserProfile, Depends(require_permission("bills:write"))],
     db: Session = Depends(get_db),
 ):
-    before = get_bill(db, bill_id)
+    # Locked so a Stripe confirmation for this bill cannot interleave with the edit.
+    before = payment_service.lock_bill(db, bill_id)
     old_amount, old_status = before.amount, before.payment_status
+    changes = {k: v for k, v in data.changes().items() if getattr(before, k) != v}
+    if changes and changes != {"payment_status": "cancelled"} and payment_service.settled_online(db, bill_id):
+        # Reverting or re-pricing a bill Stripe has settled would let it be paid
+        # again and leave the records disagreeing with Stripe.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This bill was paid online. Refund it in the Stripe Dashboard first; "
+                   "after that it can only be marked cancelled.",
+        )
     bill = update_bill(db, bill_id, data)
     # A changed amount or a bill that is no longer pending must not stay payable
     # through a Checkout Session created earlier.

@@ -1,5 +1,4 @@
 from datetime import datetime
-from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy import select

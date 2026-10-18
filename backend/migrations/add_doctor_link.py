@@ -16,7 +16,7 @@ Rollback (manual):
     ALTER TABLE user_profiles DROP COLUMN IF EXISTS doctor_id;
 
 Run from backend/ with the virtual environment activated:
-    python migrate_add_doctor_link.py
+    python -m migrations.add_doctor_link
 """
 from sqlalchemy import inspect, text
 

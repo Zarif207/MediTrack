@@ -1,17 +1,9 @@
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Integer, Numeric, String
+from sqlalchemy import BigInteger, CheckConstraint, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
-
-from sqlalchemy import (
-    BigInteger,
-    CheckConstraint,
-    Integer,
-    Numeric,
-    String,
-)
 
 
 class Medicine(Base):

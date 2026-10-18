@@ -60,11 +60,26 @@ def _provider_error(exc: Exception) -> HTTPException:
     )
 
 
-def _lock_bill(db: Session, bill_id: int) -> Bill:
-    bill = db.scalars(select(Bill).where(Bill.bill_id == bill_id).with_for_update()).first()
+def lock_bill(db: Session, bill_id: int) -> Bill:
+    """
+    SELECT … FOR UPDATE the bill. populate_existing refreshes a Bill the session
+    already loaded, so status checks after the lock see the committed row, not
+    a copy read before another request changed it.
+    """
+    bill = db.scalars(
+        select(Bill).where(Bill.bill_id == bill_id).with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
     if bill is None:
         raise HTTPException(status_code=404, detail="Bill not found.")
     return bill
+
+
+def settled_online(db: Session, bill_id: int) -> bool:
+    """True when a Stripe payment for this bill has been confirmed and applied."""
+    return db.scalar(
+        select(BillPayment.payment_id).where(BillPayment.bill_id == bill_id, BillPayment.status == "paid").limit(1)
+    ) is not None
 
 
 # ── Checkout ──────────────────────────────────────────────────────────────────
@@ -72,7 +87,7 @@ def _lock_bill(db: Session, bill_id: int) -> Bill:
 def start_checkout(db: Session, bill_id: int, user: UserProfile) -> BillPayment:
     """Return an open Checkout Session for the bill, creating one if needed."""
     client = get_client()
-    bill = _lock_bill(db, bill_id)  # serialises double clicks and parallel tabs
+    bill = lock_bill(db, bill_id)  # serialises double clicks and parallel tabs
 
     if bill.payment_status == "paid":
         raise HTTPException(status_code=409, detail="This bill has already been paid.")
@@ -181,7 +196,7 @@ def _apply_paid_session(db: Session, payment: BillPayment, session) -> str:
     """Apply a Stripe session that Stripe reports as paid. Caller commits. Idempotent."""
     if payment.status == "paid":
         return "already_applied"
-    bill = _lock_bill(db, payment.bill_id)
+    bill = lock_bill(db, payment.bill_id)
     payment.stripe_payment_intent_id = _id_of(getattr(session, "payment_intent", None))
     payment.completed_at = datetime.now()
 
@@ -219,11 +234,16 @@ def _id_of(value):
 def _payment_for_session(db: Session, session_id: str) -> BillPayment | None:
     return db.scalars(
         select(BillPayment).where(BillPayment.stripe_session_id == session_id).with_for_update()
+        .execution_options(populate_existing=True)
     ).first()
 
 
 def handle_event(db: Session, event) -> str:
     """Process one verified webhook event exactly once. Returns an outcome label."""
+    if getattr(event, "livemode", False):
+        # Only test-mode keys are accepted; a live event means a misconfigured endpoint.
+        logger.warning("Ignored a live-mode Stripe event; MediTrack runs in test mode only.")
+        return "ignored_livemode"
     db.add(StripeEvent(event_id=event.id, event_type=event.type, received_at=datetime.now()))
     try:
         db.flush()

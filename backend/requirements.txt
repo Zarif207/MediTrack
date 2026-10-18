@@ -49,7 +49,6 @@ pyasn1_modules==0.4.2
 pycparser==3.11
 pyjwt==2.15.1
 pyparsing==3.3.3
-python-multipart==0.0.20
 requests==2.34.2
 uritemplate==4.2.0
 urllib3==2.8.0

@@ -1,16 +1,7 @@
-from sqlalchemy import BigInteger, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
-
-from sqlalchemy import (
-    BigInteger,
-    CheckConstraint,
-    ForeignKey,
-    Integer,
-    String,
-    UniqueConstraint,
-)
 
 
 class PrescriptionItem(Base):
@@ -73,13 +64,6 @@ class PrescriptionItem(Base):
         back_populates="prescription_items",
     )
 
-    # __table_args__ = (
-    #     UniqueConstraint(
-    #         "prescription_id",
-    #         "medicine_id",
-    #         name="uq_prescription_medicine",
-    #     ),
-    # )
     # ── Read-only values exposed in API responses ────────────────────────────
     @property
     def medicine_name(self) -> str | None:

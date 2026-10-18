@@ -53,7 +53,7 @@ the default and fake modes: it checks the right Pay-button state for each, and t
 Webhook signatures are still verified by the real code: `run.mjs` signs events with the fake's secret.
 The payment checks cover Pay → redirect to `checkout.stripe.com` (intercepted, never loaded), cancel and
 success returns, signed and forged webhooks, duplicates, and the staff "Pending payments" / "Fully paid"
-groups. For a real Stripe test-mode run see `docs/PAYMENTS.md`.
+groups. For a real Stripe test-mode run see *Stripe (test mode)* in the root README.
 
 ## Emulator limitations
 

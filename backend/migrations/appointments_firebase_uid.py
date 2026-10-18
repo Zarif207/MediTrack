@@ -15,7 +15,7 @@ Schema change:
 
 Idempotent — safe to run multiple times.
 Run from backend/ with the virtual environment activated:
-    python migrate_appointments_firebase_uid.py
+    python -m migrations.appointments_firebase_uid
 """
 import sys
 from sqlalchemy import inspect, text

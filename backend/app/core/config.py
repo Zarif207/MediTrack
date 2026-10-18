@@ -43,6 +43,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @field_validator("database_url")
+    @classmethod
+    def _psycopg_driver(cls, value: str) -> str:
+        # Hosting providers hand out postgres:// or postgresql:// URLs, which
+        # SQLAlchemy maps to psycopg2; this project installs psycopg 3.
+        for prefix in ("postgres://", "postgresql://"):
+            if value.startswith(prefix):
+                return "postgresql+psycopg://" + value[len(prefix):]
+        return value
+
     @field_validator("allowed_origins")
     @classmethod
     def _strip_origins(cls, value: str) -> str:
@@ -89,6 +99,12 @@ class Settings(BaseSettings):
         if os.getenv("FIREBASE_AUTH_EMULATOR_HOST"):
             # In emulator mode the Admin SDK accepts unsigned, unexpiring tokens.
             problems.append("FIREBASE_AUTH_EMULATOR_HOST must not be set in production.")
+        if self.stripe_enabled:
+            if not self.stripe_webhook_secret:
+                # Without it bills are only settled when a patient returns to the site.
+                problems.append("STRIPE_WEBHOOK_SECRET is required when STRIPE_SECRET_KEY is set.")
+            if not self.public_app_url.startswith("https://") or "localhost" in self.public_app_url:
+                problems.append("PUBLIC_APP_URL must be the deployed https:// frontend URL.")
         if problems:
             raise ValueError(" ".join(problems))
         return self

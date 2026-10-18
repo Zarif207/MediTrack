@@ -47,7 +47,6 @@ elif not os.getenv("E2E_REAL_STRIPE"):
 
 import uvicorn  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
-from sqlalchemy.orm import Session  # noqa: E402
 
 admin = create_engine(test.set(database="postgres"), isolation_level="AUTOCOMMIT")
 with admin.connect() as c:

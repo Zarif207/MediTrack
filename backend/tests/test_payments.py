@@ -167,8 +167,8 @@ def test_checkout_not_configured_is_503(client, world, monkeypatch):
 
 def test_live_keys_are_rejected():
     with pytest.raises(ValueError, match="test-mode"):
-        Settings(database_url="postgresql://x/y", stripe_secret_key="sk_live_abc")
-    assert Settings(database_url="postgresql://x/y", stripe_secret_key="sk_test_abc").stripe_enabled
+        Settings(_env_file=None, database_url="postgresql://x/y", stripe_secret_key="sk_live_abc")
+    assert Settings(_env_file=None, database_url="postgresql://x/y", stripe_secret_key="sk_test_abc").stripe_enabled
 
 
 def test_patient_checkout_uses_server_amount_and_test_urls(client, db, world, stripe_on):
@@ -467,3 +467,60 @@ def test_patient_payment_flow_still_works_end_to_end(client, db, world, stripe_o
     db.expire_all()
     assert db.get(Bill, world.ids["bill_a"]).payment_status == "paid"
     assert client.get(f"/payments/stripe/sessions/{sid}", headers=auth(world.uids["patient_a"])).json()["bill_status"] == "paid"
+
+
+# ── Payment-state integrity ───────────────────────────────────────────────────
+
+def test_live_mode_events_are_ignored(client, db, world, stripe_on):
+    sid = checkout(client, world).json()["session_id"]
+    r = deliver(client, {**event("checkout.session.completed", sid), "livemode": True})
+    assert r.status_code == 200 and r.json()["outcome"] == "ignored_livemode"
+    db.expire_all()
+    assert db.get(Bill, world.ids["bill_a"]).payment_status == "pending"
+    assert db.scalar(select(func.count()).select_from(StripeEvent)) == 0
+
+
+@pytest.mark.parametrize("change", [
+    {"payment_status": "pending"},
+    {"amount": "50.00"},
+    {"payment_method": "Cash"},
+])
+def test_stripe_settled_bill_cannot_be_reverted_or_repriced(client, db, world, stripe_on, change):
+    sid = checkout(client, world).json()["session_id"]
+    deliver(client, event("checkout.session.completed", sid))
+    r = client.patch(f"/bills/{world.ids['bill_a']}", headers=auth(world.uids["admin"]), json=change)
+    assert r.status_code == 409 and "Stripe" in r.json()["detail"]
+    db.expire_all()
+    bill = db.get(Bill, world.ids["bill_a"])
+    assert (bill.payment_status, bill.amount, bill.payment_method) == ("paid", Decimal("100.00"), "Card (Stripe)")
+
+
+def test_stripe_settled_bill_can_be_cancelled_after_refund(client, db, world, stripe_on):
+    sid = checkout(client, world).json()["session_id"]
+    deliver(client, event("checkout.session.completed", sid))
+    h = auth(world.uids["accountant"])
+    # Resending the current values is not a change.
+    assert client.patch(f"/bills/{world.ids['bill_a']}", headers=h, json={"payment_status": "paid"}).status_code == 200
+    r = client.patch(f"/bills/{world.ids['bill_a']}", headers=h, json={"payment_status": "cancelled"})
+    assert r.status_code == 200 and r.json()["paid_at"] is None
+    # Cancelled for good: it cannot be reopened for a second payment.
+    assert client.patch(f"/bills/{world.ids['bill_a']}", headers=h, json={"payment_status": "pending"}).status_code == 409
+    assert checkout(client, world).status_code == 409
+
+
+def test_checkout_rechecks_the_bill_after_taking_the_lock(db, world, stripe_on):
+    """A bill paid by staff after this session read it must not get a Checkout Session."""
+    from app.database.connection import SessionLocal
+    from app.models import UserProfile
+    from app.services import payment_service
+
+    stale = db.get(Bill, world.ids["bill_a"])
+    assert stale.payment_status == "pending"
+    with SessionLocal() as other:
+        bill = other.get(Bill, world.ids["bill_a"])
+        bill.payment_status, bill.paid_at, bill.payment_method = "paid", datetime.now(), "Cash"
+        other.commit()
+    with pytest.raises(Exception) as exc:
+        payment_service.start_checkout(db, world.ids["bill_a"], db.get(UserProfile, world.uids["patient_a"]))
+    assert getattr(exc.value, "status_code", None) == 409
+    assert stripe_on.created == []

@@ -56,14 +56,14 @@ def test_production_settings_reject_unsafe_values():
     from app.core.config import Settings
 
     with pytest.raises(ValidationError):
-        Settings(app_env="production", database_url="postgresql://x/y", allowed_origins="*")
+        Settings(_env_file=None, app_env="production", database_url="postgresql://x/y", allowed_origins="*")
     with pytest.raises(ValidationError):
-        Settings(app_env="production", database_url="postgresql://x/y",
+        Settings(_env_file=None, app_env="production", database_url="postgresql://x/y",
                  allowed_origins="http://localhost:5173")
     with pytest.raises(ValidationError):
-        Settings(app_env="production", database_url="postgresql://x/y",
+        Settings(_env_file=None, app_env="production", database_url="postgresql://x/y",
                  allowed_origins="https://meditrack.example", db_echo=True)
-    ok = Settings(app_env="production", database_url="postgresql://x/y",
+    ok = Settings(_env_file=None, app_env="production", database_url="postgresql://x/y",
                   allowed_origins="https://meditrack.example", db_echo=False)
     assert ok.cors_origins == ["https://meditrack.example"]
 
@@ -75,7 +75,36 @@ def test_production_refuses_auth_emulator(monkeypatch):
 
     monkeypatch.setenv("FIREBASE_AUTH_EMULATOR_HOST", "127.0.0.1:9099")
     with pytest.raises(ValidationError, match="FIREBASE_AUTH_EMULATOR_HOST"):
-        Settings(app_env="production", database_url="postgresql://x/y",
+        Settings(_env_file=None, app_env="production", database_url="postgresql://x/y",
                  allowed_origins="https://meditrack.example", db_echo=False)
     # Development still allows it for local testing.
-    assert Settings(app_env="development", database_url="postgresql://x/y").app_env == "development"
+    assert Settings(_env_file=None, app_env="development", database_url="postgresql://x/y").app_env == "development"
+
+
+def test_production_stripe_needs_webhook_secret_and_https_return_url():
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    base = dict(_env_file=None, app_env="production", database_url="postgresql://x/y",
+                allowed_origins="https://meditrack.example", stripe_secret_key="sk_test_abc")
+    with pytest.raises(ValidationError, match="STRIPE_WEBHOOK_SECRET"):
+        Settings(**base, public_app_url="https://meditrack.example")
+    with pytest.raises(ValidationError, match="PUBLIC_APP_URL"):
+        Settings(**base, stripe_webhook_secret="whsec_x", public_app_url="http://localhost:5173")
+    ok = Settings(**base, stripe_webhook_secret="whsec_x", public_app_url="https://meditrack.example")
+    assert ok.stripe_enabled
+    # Stripe left unset in production is fine: online payment is simply off.
+    assert not Settings(**{**base, "stripe_secret_key": None}).stripe_enabled
+
+
+@pytest.mark.parametrize("url", [
+    "postgres://u:p@db.example:5432/meditrack?sslmode=require",
+    "postgresql://u:p@db.example:5432/meditrack?sslmode=require",
+    "postgresql+psycopg://u:p@db.example:5432/meditrack?sslmode=require",
+])
+def test_hosted_database_urls_use_the_installed_driver(url):
+    from app.core.config import Settings
+
+    s = Settings(_env_file=None, database_url=url)
+    assert s.database_url == "postgresql+psycopg://u:p@db.example:5432/meditrack?sslmode=require"

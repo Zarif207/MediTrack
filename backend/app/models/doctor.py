@@ -1,8 +1,7 @@
-from sqlalchemy import BigInteger, String
+from sqlalchemy import BigInteger, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
-from sqlalchemy import BigInteger, ForeignKey, String
 
 
 class Doctor(Base):

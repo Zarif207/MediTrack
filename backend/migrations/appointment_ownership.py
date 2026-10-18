@@ -30,7 +30,7 @@ Rollback (manual, only if no unlinked bookings exist yet):
         -- appointments with patient_id IS NULL exist; those must be linked first.
 
 Run from backend/ with the virtual environment activated:
-    python migrate_appointment_ownership.py
+    python -m migrations.appointment_ownership
 """
 import sys
 

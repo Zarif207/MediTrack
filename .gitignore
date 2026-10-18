@@ -1,43 +1,86 @@
-# Python
-__pycache__/
-*.py[cod]
-
-# Virtual environment
-.venv/
-venv/
-env/
-
-# Environment variables (examples are safe to commit)
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# Real environment files. Only the placeholder templates are committed.
 .env
 .env.*
+*.env
 !.env.example
+!*.env.example
 
-# Credentials — never commit service accounts or private keys
+# Firebase service accounts, Google credentials, keys and certificates
 *firebase-adminsdk*.json
 serviceAccount*.json
 service-account*.json
+*service_account*.json
+*credentials*.json
+application_default_credentials.json
 *.pem
 *.key
 *.p12
+*.pfx
+*.crt
+*.jks
+id_rsa*
+id_ed25519*
 
-# Logs, build output, local databases
-*.log
-dist/
+# Firebase CLI local state and emulator exports
+.firebase/
+.firebaserc.local
+firebase-debug*.log
+firestore-debug.log
+ui-debug.log
+emulator-data/
+
+# Stripe CLI local config
+.stripe/
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+# Database dumps, backups and local databases (may contain patient data)
+*.sql
+*.sql.gz
+*.dump
+*.backup
+*.bak
+*.db
 *.sqlite
 *.sqlite3
-*.db
-coverage/
-htmlcov/
-.coverage
+backups/
 
-# macOS
-.DS_Store
-
-# IDE
-.vscode/
-.idea/
-
-# Python tooling
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+
+# ── Node / frontend ───────────────────────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+*.local
+coverage/
+.vite/
+.eslintcache
+
+# ── Logs and screenshots ──────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+e2e/shots/
+
+# ── OS and editors ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.suo
