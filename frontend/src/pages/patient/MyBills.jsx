@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { RiBillLine } from 'react-icons/ri'
 import { billsApi } from '../../services/api'
 import { useAsync } from '../../hooks/useAsync'
@@ -9,10 +10,13 @@ import { EmptyState } from '../../components/ui/States'
 import { formatCurrency, formatDate } from '../../utils/format'
 import { PendingPayments } from '../../components/billing/BillingGroups'
 import PaymentReturnNotice from '../../components/billing/PaymentReturnNotice'
+import PayButton from '../../components/billing/PayButton'
+import { Alert } from '../../components/ui/States'
 
 export default function MyBills() {
   const { data, loading, error, reload } = useAsync(() => Promise.all([billsApi.listAll(), billsApi.summary()]), [])
   const [allBills, summary] = data ?? [[], null]
+  const [payError, setPayError] = useState(null)
   const bills = [...allBills].sort((a, b) => b.issued_at.localeCompare(a.issued_at))
   const outstanding = bills
     .filter((b) => b.payment_status === 'pending')
@@ -39,6 +43,7 @@ export default function MyBills() {
           <PendingPayments summary={summary} canPay showPatient={false} title="Awaiting payment" />
         </div>
       )}
+      {payError && <div className="mb-4"><Alert onDismiss={() => setPayError(null)}>{payError}</Alert></div>}
       <Panel title="Payment history">
         <DataTable
           caption="Your bills"
@@ -47,6 +52,9 @@ export default function MyBills() {
           onRetry={reload}
           rows={bills}
           rowKey={(b) => b.bill_id}
+          actions={summary ? (b) => (b.payment_status === 'pending'
+            ? <PayButton billId={b.bill_id} enabled={summary.online_payment_enabled} onError={setPayError} />
+            : null) : undefined}
           empty={<EmptyState icon={RiBillLine} title="No bills yet" description="Bills issued for your visits will appear here." />}
           columns={[
             { key: 'bill_id', header: 'Bill', primary: true, render: (b) => <span className="font-mono text-[13px]">#{b.bill_id}</span> },

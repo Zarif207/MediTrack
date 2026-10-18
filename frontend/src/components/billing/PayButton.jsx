@@ -8,7 +8,7 @@ import Button from '../ui/Button'
  * the amount and creates the session; this button only follows the URL it
  * returns. Repeat clicks are ignored while a request is in flight.
  */
-export default function PayButton({ billId, size = 'sm', variant = 'primary', onError, label = 'Pay with Stripe' }) {
+export default function PayButton({ billId, enabled = true, size = 'sm', variant = 'primary', onError, label = 'Pay with Stripe' }) {
   const [busy, setBusy] = useState(false)
 
   async function pay() {
@@ -26,7 +26,8 @@ export default function PayButton({ billId, size = 'sm', variant = 'primary', on
   }
 
   return (
-    <Button size={size} variant={variant} icon={RiBankCardLine} loading={busy} onClick={pay}>
+    <Button size={size} variant={variant} icon={RiBankCardLine} loading={busy} onClick={pay}
+      disabled={!enabled} title={enabled ? undefined : 'Online payment is not set up yet'}>
       {label}
     </Button>
   )

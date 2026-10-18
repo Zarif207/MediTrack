@@ -17,6 +17,17 @@ function Outstanding({ days }) {
   return <span className="text-xs text-ink-500">{days === 0 ? 'Issued today' : `Issued ${plural(days, 'day')} ago`}</span>
 }
 
+/** Why "Pay with Stripe" is disabled. Shown instead of silently hiding the button. */
+export function PaymentUnavailableNote({ audience = 'staff' }) {
+  return (
+    <Alert tone="info" title="Online payment isn't set up yet">
+      {audience === 'patient'
+        ? 'The clinic has not connected card payments yet, so “Pay with Stripe” is unavailable. Your bill stays pending until you pay at the clinic.'
+        : 'Stripe is not configured on the server (STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET in backend/.env), so “Pay with Stripe” is disabled. You can still record cash or card payments by editing a bill.'}
+    </Alert>
+  )
+}
+
 export function PendingPayments({ summary, canPay, limit, title = 'Pending payments', showPatient = true, action }) {
   const [error, setError] = useState(null)
   const rows = limit ? summary.pending.slice(0, limit) : summary.pending
@@ -27,6 +38,9 @@ export function PendingPayments({ summary, canPay, limit, title = 'Pending payme
       actions={action}
     >
       {error && <div className="px-4 pt-3 sm:px-5"><Alert onDismiss={() => setError(null)}>{error}</Alert></div>}
+      {canPay && !summary.online_payment_enabled && summary.pending.length > 0 && (
+        <div className="px-4 pt-3 sm:px-5"><PaymentUnavailableNote audience={showPatient ? 'staff' : 'patient'} /></div>
+      )}
       {rows.length ? (
         <ul className="divide-y divide-ink-100">
           {rows.map((b) => (
@@ -42,15 +56,12 @@ export function PendingPayments({ summary, canPay, limit, title = 'Pending payme
               <Outstanding days={b.days_outstanding} />
               {b.checkout_open && <Badge tone="info">Checkout in progress</Badge>}
               <span className="w-24 text-right text-sm font-semibold tabular-nums">{formatCurrency(b.amount)}</span>
-              {canPay && summary.online_payment_enabled && <PayButton billId={b.bill_id} onError={setError} />}
+              {canPay && <PayButton billId={b.bill_id} enabled={summary.online_payment_enabled} onError={setError} />}
             </li>
           ))}
         </ul>
       ) : (
         <EmptyState compact icon={RiCheckboxCircleLine} title="No pending payments" description="Every active bill has been paid." />
-      )}
-      {canPay && !summary.online_payment_enabled && summary.pending.length > 0 && (
-        <p className="border-t border-ink-100 px-4 py-2.5 text-xs text-ink-500 sm:px-5">Online payment is not configured; record payments manually.</p>
       )}
       {limit && summary.pending.length > limit && (
         <p className="border-t border-ink-100 px-4 py-2.5 text-xs text-ink-500 sm:px-5">Showing the {limit} oldest of {summary.pending.length}.</p>

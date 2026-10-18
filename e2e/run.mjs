@@ -242,61 +242,96 @@ await api(`/auth/users/${patientUid}/link-patient`, admin.idToken, { method: 'PA
 const billRes = await api('/bills/', admin.idToken, { method: 'POST', body: JSON.stringify({ patient_id: file.patient_id, appointment_id: mine.appointment_id, amount: '45.00' }) })
 const bill = await billRes.json()
 check(billRes.status === 201, `staff issue a 45.00 bill for the booking (HTTP ${billRes.status})`)
+const ONLINE = (await (await api('/bills/summary', admin.idToken)).json()).online_payment_enabled
+console.log(`  (online payment ${ONLINE ? 'enabled — fake Stripe' : 'NOT configured'})`)
 
 await go('/dashboard')
 await waitFor(textOnPage('Bills to pay'), 'overview pending payments')
 check(await js(textOnPage('Bills to pay')) && await js(textOnPage('Pay with Stripe')), 'patient Overview shows the pending bill with "Pay with Stripe"')
 await go('/bills')
-await waitFor(textOnPage('Awaiting payment'), 'patient bills pending section')
+await waitFor(textOnPage('Awaiting payment') + ` && [...document.querySelectorAll('tbody tr')].length > 0`, 'patient bills pending section')
 check(await js(textOnPage('Awaiting payment')) && await js(textOnPage('Payment history')), 'patient Bills page groups pending and history')
-await shot('patient-pending')
+await shot(`patient-pending-${ONLINE ? 'stripe-on' : 'stripe-off'}`)
 
-// Click Pay: capture the redirect to Stripe and block it (no real Stripe page is loaded).
-await send('Fetch.enable', { patterns: [{ urlPattern: 'https://checkout.stripe.com/*' }] })
-let checkoutUrl = null
-const onPaused = (e) => {
-  const m = JSON.parse(e.data)
-  if (m.method === 'Fetch.requestPaused') { checkoutUrl = m.params.request.url; ws.send(JSON.stringify({ id: ++id, method: 'Fetch.failRequest', params: { requestId: m.params.requestId, errorReason: 'Aborted' } })) }
+// Regression: the Pay button must be present on pending bills whether or not
+// Stripe is configured — disabled with an explanation when it is not.
+const payState = (billId) => js(`(() => {
+  const inPanel = [...document.querySelectorAll('section')].filter(s => /Awaiting payment|Pending payments|Bills to pay/.test(s.innerText))
+    .flatMap(s => [...s.querySelectorAll('li')]).filter(li => new RegExp('[Bb]ill #${billId}([^0-9]|$)').test(li.innerText))
+    .flatMap(li => [...li.querySelectorAll('button')]).filter(b => b.textContent.includes('Pay with Stripe'))
+  const inTable = [...document.querySelectorAll('tbody tr')].filter(tr => new RegExp('(^|Bill )#${billId}([^0-9]|$)').test(tr.querySelector('td').innerText.trim()))
+    .flatMap(tr => [...tr.querySelectorAll('button')]).filter(b => b.textContent.includes('Pay with Stripe'))
+  const all = [...inPanel, ...inTable]
+  return { panel: inPanel.length, table: inTable.length, disabled: all.length > 0 && all.every(b => b.disabled) }
+})()`)
+const ps = await payState(bill.bill_id)
+check(ps.panel === 1 && ps.table === 1, `patient sees "Pay with Stripe" for the pending bill in the pending list and its table row [panel=${ps.panel}, table=${ps.table}]`)
+if (ONLINE) {
+  check(!ps.disabled, 'Stripe configured: the Pay buttons are enabled')
+} else {
+  check(ps.disabled, 'Stripe not configured: the Pay buttons are shown disabled, not hidden')
+  check(await js(textOnPage("Online payment isn't set up yet")) && await js(textOnPage('pay at the clinic')), 'Stripe not configured: patient sees a clear explanation')
+  const r = await api(`/bills/${bill.bill_id}/checkout`, other.idToken, { method: 'POST' })
+  check(r.status === 404, 'another patient still cannot start checkout for it')
 }
-ws.addEventListener('message', onPaused)
-await clickText('Pay with Stripe', 'button')
-const until = Date.now() + 10000
-while (!checkoutUrl && Date.now() < until) await sleep(100)
-ws.removeEventListener('message', onPaused)
-await send('Fetch.disable')
-check(Boolean(checkoutUrl?.startsWith('https://checkout.stripe.com/c/pay/cs_test_')), `"Pay with Stripe" redirects to Stripe Checkout [${checkoutUrl?.slice(0, 60)}]`)
-const sid = checkoutUrl?.split('/').pop()
-check((await (await api(`/bills/${bill.bill_id}`, other.idToken)).status) === 404, "another patient cannot see this bill")
-check((await (await api(`/bills/${bill.bill_id}/checkout`, other.idToken, { method: 'POST' })).status) === 404, "another patient cannot start checkout for it")
-check((await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()).payment_status === 'pending', 'starting checkout does not mark the bill paid')
 
-// Cancelled on Stripe → back to /bills, nothing changes.
-await go(`/bills?payment=cancelled&bill=${bill.bill_id}`)
-await waitFor(textOnPage('Payment cancelled'), 'cancel notice')
-check(await js(textOnPage('Nothing was charged')), 'cancel return explains nothing was charged')
-// Forged "success" return without Stripe confirmation → not paid.
-await go(`/bills?payment=success&session_id=${sid}`)
-await sleep(2500)
-check(!(await js(textOnPage('Payment received'))) && (await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()).payment_status === 'pending',
-  'success URL alone does not mark the bill paid')
+if (ONLINE) {
+  // Click Pay: capture the redirect to Stripe and block it (no real Stripe page is loaded).
+  await send('Fetch.enable', { patterns: [{ urlPattern: 'https://checkout.stripe.com/*' }] })
+  let checkoutUrl = null
+  const onPaused = (e) => {
+    const m = JSON.parse(e.data)
+    if (m.method === 'Fetch.requestPaused') { checkoutUrl = m.params.request.url; ws.send(JSON.stringify({ id: ++id, method: 'Fetch.failRequest', params: { requestId: m.params.requestId, errorReason: 'Aborted' } })) }
+  }
+  ws.addEventListener('message', onPaused)
+  await clickText('Pay with Stripe', 'button')
+  const until = Date.now() + 10000
+  while (!checkoutUrl && Date.now() < until) await sleep(100)
+  ws.removeEventListener('message', onPaused)
+  await send('Fetch.disable')
+  check(Boolean(checkoutUrl?.startsWith('https://checkout.stripe.com/c/pay/cs_test_')), `"Pay with Stripe" redirects to Stripe Checkout [${checkoutUrl?.slice(0, 60)}]`)
+  const sid = checkoutUrl?.split('/').pop()
+  check((await (await api(`/bills/${bill.bill_id}`, other.idToken)).status) === 404, "another patient cannot see this bill")
+  check((await (await api(`/bills/${bill.bill_id}/checkout`, other.idToken, { method: 'POST' })).status) === 404, "another patient cannot start checkout for it")
+  check((await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()).payment_status === 'pending', 'starting checkout does not mark the bill paid')
 
-// Stripe confirms via signed webhook; a duplicate delivery is ignored.
-const w1 = await webhook(stripeEvent('evt_e2e_1', 'checkout.session.completed', sid, 4500))
-check(w1.status === 200 && w1.body.outcome === 'paid', `verified webhook marks the bill paid (${w1.body.outcome})`)
-const w2 = await webhook(stripeEvent('evt_e2e_1', 'checkout.session.completed', sid, 4500))
-check(w2.body.outcome === 'duplicate_event', 'duplicate webhook delivery is ignored')
-const forged = await fetch(`${API}/payments/stripe/webhook`, { method: 'POST', body: '{}', headers: { 'Stripe-Signature': 't=1,v1=bad' } })
-check(forged.status === 400, 'webhook with a bad signature is rejected (400)')
-await go(`/bills?payment=success&session_id=${sid}`)
-await waitFor(textOnPage('Payment received'), 'success notice')
-check(await js(textOnPage('Payment received')), 'return page confirms the payment')
-const paidBill = await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()
-check(paidBill.payment_status === 'paid' && paidBill.payment_method === 'Card (Stripe)', 'bill is paid by Stripe card')
-check(!(await js(textOnPage('Awaiting payment'))), 'patient Bills page no longer lists it as pending')
-const summary = await (await api('/bills/summary', admin.idToken)).json()
-check(summary.fully_paid.some((p) => p.patient_id === file.patient_id) && !summary.pending.some((b) => b.bill_id === bill.bill_id),
-  'staff summary moves the patient to "Fully paid"')
-check((await api(`/bills/${bill.bill_id}/checkout`, admin.idToken, { method: 'POST' })).status === 409, 'a paid bill cannot be checked out again')
+  // Cancelled on Stripe → back to /bills, nothing changes.
+  await go(`/bills?payment=cancelled&bill=${bill.bill_id}`)
+  await waitFor(textOnPage('Payment cancelled'), 'cancel notice')
+  check(await js(textOnPage('Nothing was charged')), 'cancel return explains nothing was charged')
+  // Forged "success" return without Stripe confirmation → not paid.
+  await go(`/bills?payment=success&session_id=${sid}`)
+  await sleep(2500)
+  check(!(await js(textOnPage('Payment received'))) && (await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()).payment_status === 'pending',
+    'success URL alone does not mark the bill paid')
+
+  // Stripe confirms via signed webhook; a duplicate delivery is ignored.
+  const w1 = await webhook(stripeEvent('evt_e2e_1', 'checkout.session.completed', sid, 4500))
+  check(w1.status === 200 && w1.body.outcome === 'paid', `verified webhook marks the bill paid (${w1.body.outcome})`)
+  const w2 = await webhook(stripeEvent('evt_e2e_1', 'checkout.session.completed', sid, 4500))
+  check(w2.body.outcome === 'duplicate_event', 'duplicate webhook delivery is ignored')
+  const forged = await fetch(`${API}/payments/stripe/webhook`, { method: 'POST', body: '{}', headers: { 'Stripe-Signature': 't=1,v1=bad' } })
+  check(forged.status === 400, 'webhook with a bad signature is rejected (400)')
+  await go(`/bills?payment=success&session_id=${sid}`)
+  await waitFor(textOnPage('Payment received'), 'success notice')
+  check(await js(textOnPage('Payment received')), 'return page confirms the payment')
+  const paidBill = await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()
+  check(paidBill.payment_status === 'paid' && paidBill.payment_method === 'Card (Stripe)', 'bill is paid by Stripe card')
+  check(!(await js(textOnPage('Awaiting payment'))), 'patient Bills page no longer lists it as pending')
+  const summary = await (await api('/bills/summary', admin.idToken)).json()
+  check(summary.fully_paid.some((p) => p.patient_id === file.patient_id) && !summary.pending.some((b) => b.bill_id === bill.bill_id),
+    'staff summary moves the patient to "Fully paid"')
+  check((await api(`/bills/${bill.bill_id}/checkout`, admin.idToken, { method: 'POST' })).status === 409, 'a paid bill cannot be checked out again')
+} else {
+  check((await api(`/bills/${bill.bill_id}/checkout`, admin.idToken, { method: 'POST' })).status === 503, 'checkout API answers 503 while Stripe is not configured')
+  check((await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()).payment_status === 'pending', 'the bill stays pending')
+  const cash = await api(`/bills/${bill.bill_id}`, admin.idToken, { method: 'PATCH', body: JSON.stringify({ payment_status: 'paid', payment_method: 'Cash' }) })
+  check(cash.status === 200, 'staff record a cash payment instead')
+}
+await go('/bills')
+await waitFor(`[...document.querySelectorAll('tbody tr')].length > 0 && !${textOnPage('Awaiting payment')}`, 'paid bill view')
+const after = await payState(bill.bill_id)
+check(after.panel === 0 && after.table === 0, `no Pay button once the bill is paid [panel=${after.panel}, table=${after.table}]`)
 
 // 6. Back to home keeps the session, and returning works (no loop).
 await go('/appointments')
@@ -377,10 +412,18 @@ await clickText('Sign in', 'button')
 await waitFor(`location.pathname === '/dashboard' && ${textOnPage('Fully paid')}`, 'admin overview billing')
 check(await js(textOnPage('Pending payments')) && await js(textOnPage('Fully paid')), 'staff Overview shows "Pending payments" and "Fully paid"')
 check(await js(`[...document.querySelectorAll('section')].some(s => s.innerText.startsWith('Fully paid') && s.innerText.includes('Erin Example'))`), 'the paid patient is listed under "Fully paid"')
+const appt2 = await (await api('/appointments/', admin.idToken, { method: 'POST', body: JSON.stringify({ patient_id: file.patient_id, doctor_id: mine.doctor_id, appointment_date: dayISO, appointment_time: '15:30' }) })).json()
+const bill2 = await (await api('/bills/', admin.idToken, { method: 'POST', body: JSON.stringify({ patient_id: file.patient_id, appointment_id: appt2.appointment_id, amount: '20.00' }) })).json()
 await go('/bills')
-await waitFor(textOnPage('Fully paid') + ' && ' + textOnPage('Pending payments'), 'staff bills grouping')
+await waitFor(textOnPage('Fully paid') + ' && ' + textOnPage('Pending payments') + ` && [...document.querySelectorAll('tbody tr')].length >= 2`, 'staff bills grouping')
 check(await js(textOnPage('Pending payments')) && await js(textOnPage('Fully paid')) && await js(textOnPage('All bills')), 'staff Bills page shows the same grouping')
-await shot('staff-bills')
+await shot(`staff-bills-${ONLINE ? 'stripe-on' : 'stripe-off'}`)
+const staffPending = await payState(bill2.bill_id)
+const staffPaid = await payState(bill.bill_id)
+check(staffPending.panel === 1 && staffPending.table === 1, `billing staff see "Pay with Stripe" for a pending bill in the list and the table [panel=${staffPending.panel}, table=${staffPending.table}]`)
+check(staffPaid.panel === 0 && staffPaid.table === 0, 'billing staff see no Pay button on a paid bill')
+check(ONLINE ? !staffPending.disabled : (staffPending.disabled && await js(textOnPage('Stripe is not configured on the server'))),
+  ONLINE ? 'staff Pay button is enabled with Stripe configured' : 'staff see the button disabled with a configuration explanation')
 
 check(pageErrors.length === 0, `no uncaught page errors${pageErrors.length ? `: ${pageErrors.join('; ')}` : ''}`)
 ws.close()
