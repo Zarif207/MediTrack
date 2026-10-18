@@ -44,6 +44,11 @@ requested page; an unlinked doctor sees no appointments or records and is told w
 has no admin or billing pages; a linked doctor sees their own appointment and loses it when re-linked
 to another doctor record; no uncaught page errors.
 
+Stripe modes for `start_backend.py`: **off by default** (a key in `backend/.env` is ignored),
+`E2E_FAKE_STRIPE=1` for the fake below, or `E2E_REAL_STRIPE=1` to use your `sk_test_` key (then run
+`stripe listen`; the signed-webhook checks in `run.mjs` only pass in fake mode). Run the suite in both
+the default and fake modes: it checks the right Pay-button state for each, and that only patients can pay.
+
 `E2E_FAKE_STRIPE=1` replaces Stripe's API calls with `fake_stripe.py` (no network, test key only).
 Webhook signatures are still verified by the real code: `run.mjs` signs events with the fake's secret.
 The payment checks cover Pay → redirect to `checkout.stripe.com` (intercepted, never loaded), cancel and

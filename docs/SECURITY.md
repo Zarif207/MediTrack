@@ -45,6 +45,7 @@ values (`ck_user_profiles_role`).
 | Prescriptions | read · write · delete | – | read · write (own†) | read | – | own |
 | Prescription items | read · write · delete | – | read · write · delete (own†) | read | – | own |
 | Bills | read · write · delete | read · write | – | – | read · write | own |
+| Pay a bill online (Stripe) | – | – | – | – | – | own pending bills only |
 
 `user` (Awaiting access): own profile only.
 

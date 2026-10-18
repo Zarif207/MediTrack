@@ -32,12 +32,18 @@ if test.database == dev.database or not test.database.endswith("_test"):
     sys.exit("Refusing to run: the database must be a *_test database.")
 settings.database_url = test.render_as_string(hide_password=False)
 
+# Stripe for e2e runs: fake (E2E_FAKE_STRIPE=1), the developer's TEST key from
+# backend/.env (E2E_REAL_STRIPE=1, needs `stripe listen` for webhooks), or —
+# by default — disabled, so a key in .env is never used unintentionally.
 if os.getenv("E2E_FAKE_STRIPE"):
     import stripe  # noqa: E402
 
     import fake_stripe  # noqa: E402
 
     fake_stripe.install(settings, stripe)
+elif not os.getenv("E2E_REAL_STRIPE"):
+    settings.stripe_secret_key = None
+    settings.stripe_webhook_secret = None
 
 import uvicorn  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
@@ -60,5 +66,5 @@ from seed import seed  # noqa: E402
 Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 seed(engine)
-print(f"E2E API on :{PORT}, {test.database}, fake Stripe={bool(os.getenv('E2E_FAKE_STRIPE'))} (emulator {os.environ['FIREBASE_AUTH_EMULATOR_HOST']})", flush=True)
+print(f"E2E API on :{PORT}, {test.database}, Stripe={'fake' if os.getenv('E2E_FAKE_STRIPE') else 'real test key' if os.getenv('E2E_REAL_STRIPE') else 'off'} (emulator {os.environ['FIREBASE_AUTH_EMULATOR_HOST']})", flush=True)
 uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

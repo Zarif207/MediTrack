@@ -263,7 +263,7 @@ function StaffDashboard() {
 
           {d.billSummary && (
             <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-              <PendingPayments summary={d.billSummary} canPay={can('bills:write')} limit={6}
+              <PendingPayments summary={d.billSummary} canPay={false} limit={6}
                 action={<Link to="/bills" className="link text-[13px]">All bills</Link>} />
               <FullyPaid summary={d.billSummary} limit={6} />
             </div>

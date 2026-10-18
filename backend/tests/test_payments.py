@@ -196,8 +196,7 @@ def test_patient_checkout_uses_server_amount_and_test_urls(client, db, world, st
 def test_repeat_checkout_reuses_the_open_session(client, db, world, stripe_on):
     first = checkout(client, world).json()
     second = checkout(client, world).json()
-    staff = checkout(client, world, who="accountant").json()
-    assert first["session_id"] == second["session_id"] == staff["session_id"]
+    assert first["session_id"] == second["session_id"]
     assert len(stripe_on.created) == 1
     assert db.scalar(select(func.count()).select_from(BillPayment)) == 1
 
@@ -220,6 +219,9 @@ def test_parallel_checkout_clicks_create_one_session(db, world, stripe_on):
 @pytest.mark.parametrize("who,bill,code", [
     ("patient_a", "bill_b", 404),      # another patient's bill
     ("patient_u", "bill_a", 404),      # unlinked patient
+    ("admin", "bill_a", 403),          # staff may manage bills but never pay them
+    ("receptionist", "bill_a", 403),
+    ("accountant", "bill_a", 403),
     ("doctor", "bill_a", 403),
     ("pharmacist", "bill_a", 403),
     ("user", "bill_a", 403),
@@ -420,3 +422,48 @@ def test_staff_cash_payment_still_works_and_closes_checkout(client, db, world, s
 def test_bill_with_payment_history_cannot_be_deleted(client, world, stripe_on):
     checkout(client, world)
     assert client.delete(f"/bills/{world.ids['bill_a']}", headers=auth(world.uids["admin"])).status_code == 409
+
+
+# ── Only patients pay ─────────────────────────────────────────────────────────
+
+STAFF_ROLES = ["admin", "receptionist", "accountant", "doctor", "pharmacist"]
+
+
+@pytest.mark.parametrize("role", STAFF_ROLES)
+def test_staff_direct_checkout_request_is_refused(client, db, world, stripe_on, role):
+    """A direct API call from any staff role is refused before Stripe is contacted."""
+    for bill in ("bill_a", "bill_b", "does-not-exist"):
+        path = f"/bills/{world.ids[bill]}/checkout" if bill in world.ids else "/bills/999999/checkout"
+        r = client.post(path, headers=auth(world.uids[role]))
+        assert r.status_code == 403, (role, bill, r.text)
+        assert "patients" in r.json()["detail"].lower()
+    assert stripe_on.created == []
+    assert db.scalar(select(func.count()).select_from(BillPayment)) == 0
+
+
+@pytest.mark.parametrize("role", STAFF_ROLES)
+def test_staff_cannot_use_a_patients_open_session(client, db, world, stripe_on, role):
+    """Even when the patient already has an open session, staff cannot obtain its URL."""
+    assert checkout(client, world).status_code == 200
+    r = checkout(client, world, who=role)
+    assert r.status_code == 403
+    assert "checkout_url" not in r.text
+    assert len(stripe_on.created) == 1
+
+
+@pytest.mark.parametrize("role", ["admin", "receptionist", "accountant"])
+def test_billing_staff_still_view_and_manage_bills(client, world, stripe_on, role):
+    h = auth(world.uids[role])
+    assert client.get("/bills/", headers=h).status_code == 200
+    assert client.get(f"/bills/{world.ids['bill_a']}", headers=h).status_code == 200
+    assert client.get("/bills/summary", headers=h).status_code == 200
+    r = client.patch(f"/bills/{world.ids['bill_a']}", headers=h, json={"payment_status": "paid", "payment_method": "Cash"})
+    assert r.status_code == 200 and r.json()["payment_status"] == "paid"
+
+
+def test_patient_payment_flow_still_works_end_to_end(client, db, world, stripe_on):
+    sid = checkout(client, world).json()["session_id"]
+    assert deliver(client, event("checkout.session.completed", sid)).json()["outcome"] == "paid"
+    db.expire_all()
+    assert db.get(Bill, world.ids["bill_a"]).payment_status == "paid"
+    assert client.get(f"/payments/stripe/sessions/{sid}", headers=auth(world.uids["patient_a"])).json()["bill_status"] == "paid"

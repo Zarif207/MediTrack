@@ -15,10 +15,9 @@ import Toolbar, { FilterSelect } from '../components/ui/Toolbar'
 import FormModal from '../components/ui/FormModal'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
 import { FieldGrid, Input, Select } from '../components/ui/Field'
-import { Alert, EmptyState } from '../components/ui/States'
+import { EmptyState } from '../components/ui/States'
 import { FullyPaid, PendingPayments, PendingReminder } from '../components/billing/BillingGroups'
 import PaymentReturnNotice from '../components/billing/PaymentReturnNotice'
-import PayButton from '../components/billing/PayButton'
 import { formatCurrency, formatDate, formatTime, fullName, plural } from '../utils/format'
 
 const STATUSES = { pending: 'Pending', paid: 'Paid', cancelled: 'Cancelled' }
@@ -46,7 +45,6 @@ export default function Bills() {
   const [deleting, setDeleting] = useState(null)
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState(null)
-  const [payError, setPayError] = useState(null)
   const form = useForm(EMPTY)
 
   const billed = useMemo(() => new Set(bills.map((b) => b.appointment_id)), [bills])
@@ -134,11 +132,11 @@ export default function Bills() {
       )}
       {summary && (
         <div className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <PendingPayments summary={summary} canPay={canWrite} />
+          {/* Staff manage bills but never pay them; only patients pay their own. */}
+          <PendingPayments summary={summary} canPay={false} />
           <FullyPaid summary={summary} />
         </div>
       )}
-      {payError && <div className="mb-4"><Alert onDismiss={() => setPayError(null)}>{payError}</Alert></div>}
       <Panel title="All bills">
         <Toolbar count={!loading && !error ? plural(rows.length, 'bill') : undefined}>
           <SearchInput value={search} onChange={setSearch} placeholder="Patient, bill # or appointment #" className="sm:w-80" />
@@ -162,9 +160,6 @@ export default function Bills() {
           ]}
           actions={(canWrite || canDelete) ? (b) => (
             <>
-              {canWrite && b.payment_status === 'pending' && summary && (
-                <PayButton billId={b.bill_id} enabled={summary.online_payment_enabled} onError={setPayError} />
-              )}
               {canWrite && <IconButton icon={RiPencilLine} label={`Edit bill #${b.bill_id}`} onClick={() => openForm(b)} />}
               {canDelete && <IconButton icon={RiDeleteBinLine} tone="danger" label={`Delete bill #${b.bill_id}`} onClick={() => { setFormError(null); setDeleting(b) }} />}
             </>

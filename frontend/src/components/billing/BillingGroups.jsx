@@ -1,6 +1,7 @@
 /**
  * Pending payments and fully paid patients, from GET /bills/summary.
- * Used on the staff Overview and the staff Bills page.
+ * Used on the staff Overview and the staff Bills page (read-only: staff never
+ * pay), and on patient pages with canPay for the patient's own bills.
  */
 import { useState } from 'react'
 import { RiBillLine, RiCheckboxCircleLine, RiTimeLine } from 'react-icons/ri'

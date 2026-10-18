@@ -20,6 +20,13 @@ const check = (ok, msg) => { console.log(`${ok ? '✓' : '✗'} ${msg}`); if (!o
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ── Emulator + API helpers (for accounts the test does not create in the UI) ──
+async function emuSignIn(email, password) {
+  const r = await fetch(`http://${EMU}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=e2e`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, returnSecureToken: true }),
+  })
+  return r.json()
+}
 async function emuSignUp(email, password) {
   const r = await fetch(`http://${EMU}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=e2e`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -122,7 +129,7 @@ const links = [
 for (const [text, expected, scope] of links) {
   await go('/')
   await waitFor(`!!document.querySelector('main h1')`, 'homepage')
-  await sleep(300)
+  await waitFor(`[...document.querySelectorAll('${scope} a')].some(a => a.textContent.trim().startsWith(${JSON.stringify(text)}) && a.offsetParent !== null)`, `link "${text}"`)
   const landed = await followLink(text, scope)
   check(landed === expected, `homepage "${text}" (${scope}) → ${expected}${landed === expected ? '' : ` [got ${landed}]`}`)
 }
@@ -188,6 +195,7 @@ const signedBook = await followLink('Book an appointment', 'main')
 await waitFor(`location.pathname === '/patient/book-appointment'`, 'patient booking page')
 check((await path()) === '/patient/book-appointment', `homepage "Book an appointment" takes a patient straight to booking [${signedBook}]`)
 await go('/')
+await waitFor(`[...document.querySelectorAll('main a')].some(a => a.textContent.trim() === 'Open MediTrack' && a.offsetParent !== null)`, 'closing Open MediTrack link')
 const openApp = await followLink('Open MediTrack', 'main')
 check(openApp === '/dashboard', 'closing section "Open MediTrack" → /dashboard')
 
@@ -243,6 +251,21 @@ const billRes = await api('/bills/', admin.idToken, { method: 'POST', body: JSON
 const bill = await billRes.json()
 check(billRes.status === 201, `staff issue a 45.00 bill for the booking (HTTP ${billRes.status})`)
 const ONLINE = (await (await api('/bills/summary', admin.idToken)).json()).online_payment_enabled
+const patientToken = (await emuSignIn(`patient-${stamp}@example.com`, PASSWORD)).idToken
+
+// Only patients pay: every staff role is refused on a direct API call (real tokens).
+const staffTokens = { admin: admin.idToken }
+for (const role of ['receptionist', 'accountant', 'doctor', 'pharmacist']) {
+  const acct = await emuSignUp(`staff-${role}-${stamp}@example.com`, PASSWORD)
+  await api('/auth/register', acct.idToken, { method: 'POST', body: '{}' })
+  await api(`/auth/users/${acct.localId}/role`, admin.idToken, { method: 'PATCH', body: JSON.stringify({ role }) })
+  staffTokens[role] = acct.idToken
+}
+for (const [role, token] of Object.entries(staffTokens)) {
+  const r = await api(`/bills/${bill.bill_id}/checkout`, token, { method: 'POST' })
+  check(r.status === 403, `${role} cannot start Stripe checkout by direct API request (HTTP ${r.status})`)
+}
+check((await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()).payment_status === 'pending', 'staff attempts left the bill pending')
 console.log(`  (online payment ${ONLINE ? 'enabled — fake Stripe' : 'NOT configured'})`)
 
 await go('/dashboard')
@@ -321,9 +344,9 @@ if (ONLINE) {
   const summary = await (await api('/bills/summary', admin.idToken)).json()
   check(summary.fully_paid.some((p) => p.patient_id === file.patient_id) && !summary.pending.some((b) => b.bill_id === bill.bill_id),
     'staff summary moves the patient to "Fully paid"')
-  check((await api(`/bills/${bill.bill_id}/checkout`, admin.idToken, { method: 'POST' })).status === 409, 'a paid bill cannot be checked out again')
+  check((await api(`/bills/${bill.bill_id}/checkout`, patientToken, { method: 'POST' })).status === 409, 'a paid bill cannot be checked out again by the patient')
 } else {
-  check((await api(`/bills/${bill.bill_id}/checkout`, admin.idToken, { method: 'POST' })).status === 503, 'checkout API answers 503 while Stripe is not configured')
+  check((await api(`/bills/${bill.bill_id}/checkout`, patientToken, { method: 'POST' })).status === 503, 'patient checkout answers 503 while Stripe is not configured')
   check((await (await api(`/bills/${bill.bill_id}`, admin.idToken)).json()).payment_status === 'pending', 'the bill stays pending')
   const cash = await api(`/bills/${bill.bill_id}`, admin.idToken, { method: 'PATCH', body: JSON.stringify({ payment_status: 'paid', payment_method: 'Cash' }) })
   check(cash.status === 200, 'staff record a cash payment instead')
@@ -400,6 +423,10 @@ await go('/dashboard')
 await waitFor(textOnPage('Back to home'), 'doctor sidebar')
 check(await js(textOnPage('Back to home')), 'doctor sidebar shows "Back to home"')
 check((await js(order('aside'))) === 'Back to home > Overview', 'doctor sidebar: "Back to home" above "Overview"')
+check(!(await js(textOnPage('Pay with Stripe'))), 'doctor Overview shows no "Pay with Stripe"')
+await go('/bills')
+await waitFor(textOnPage('isn’t available to your account'), 'doctor bills access denied')
+check(await js(textOnPage('isn’t available to your account')) && !(await js(textOnPage('Pay with Stripe'))), 'doctor cannot open Bills and sees no payment action')
 
 // 10. Staff billing view: sign in as the admin through the UI.
 await js(`document.querySelector('[aria-haspopup=menu]').click()`)
@@ -420,10 +447,12 @@ check(await js(textOnPage('Pending payments')) && await js(textOnPage('Fully pai
 await shot(`staff-bills-${ONLINE ? 'stripe-on' : 'stripe-off'}`)
 const staffPending = await payState(bill2.bill_id)
 const staffPaid = await payState(bill.bill_id)
-check(staffPending.panel === 1 && staffPending.table === 1, `billing staff see "Pay with Stripe" for a pending bill in the list and the table [panel=${staffPending.panel}, table=${staffPending.table}]`)
-check(staffPaid.panel === 0 && staffPaid.table === 0, 'billing staff see no Pay button on a paid bill')
-check(ONLINE ? !staffPending.disabled : (staffPending.disabled && await js(textOnPage('Stripe is not configured on the server'))),
-  ONLINE ? 'staff Pay button is enabled with Stripe configured' : 'staff see the button disabled with a configuration explanation')
+check(staffPending.panel === 0 && staffPending.table === 0, `admin sees no "Pay with Stripe" on a pending bill (list or table) [panel=${staffPending.panel}, table=${staffPending.table}]`)
+check(staffPaid.panel === 0 && staffPaid.table === 0, 'admin sees no Pay button on a paid bill')
+check(!(await js(textOnPage('Pay with Stripe'))) && await js(textOnPage('Pending payments')), 'staff Bills page lists pending bills without any payment action')
+await go('/dashboard')
+await waitFor(textOnPage('Pending payments'), 'staff overview billing')
+check(!(await js(textOnPage('Pay with Stripe'))), 'staff Overview shows no "Pay with Stripe"')
 
 check(pageErrors.length === 0, `no uncaught page errors${pageErrors.length ? `: ${pageErrors.join('; ')}` : ''}`)
 ws.close()

@@ -2,9 +2,11 @@
 
 ## Flow
 
-1. **Pay with Stripe** (Overview → *Pending payments* / *Bills to pay*, or the Bills page) calls
-   `POST /bills/{id}/checkout`. Allowed: the patient who owns the bill, or staff with `bills:write`
-   (admin, receptionist, accountant). Others get `403`; other patients' bills return `404`.
+1. **Pay with Stripe** (patient Overview → *Bills to pay*, or the patient's Bills page) calls
+   `POST /bills/{id}/checkout`. **Only patients can pay, and only their own bills.** Every staff role —
+   admin, receptionist, accountant, doctor, pharmacist — gets `403` even on a direct API request, and
+   another patient's bill returns `404`. Staff still view bills, see *Pending payments* / *Fully paid*,
+   and record cash or card payments by editing a bill; they never see a Pay button.
 2. The server locks the bill, refuses it unless it is `pending` with an amount above zero, and either
    reuses an open Checkout Session for the same amount or creates one. The amount and currency come
    from the database; an idempotency key prevents duplicate sessions on retries.

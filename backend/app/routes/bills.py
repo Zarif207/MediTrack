@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.auth.dependencies import allow_patient_or, require_permission
+from app.auth.dependencies import allow_patient_or, require_patient, require_permission
 from app.auth.ownership import is_patient, not_found, owns_appointment
 from app.database.dependencies import get_db
 from app.models.user_profile import UserProfile
@@ -88,16 +88,16 @@ def bill_summary(
 @router.post("/{bill_id}/checkout", response_model=CheckoutResponse)
 def start_checkout(
     bill_id: IdPath,
-    current_user: Annotated[UserProfile, Depends(allow_patient_or("bills:write"))],
+    current_user: Annotated[UserProfile, Depends(require_patient())],
     db: Session = Depends(get_db),
 ):
     """
-    Start (or resume) Stripe Checkout for a pending bill. Patients may pay only
-    their own bills; billing staff may start checkout for any pending bill.
-    The amount always comes from the bill on the server.
+    Start (or resume) Stripe Checkout for a pending bill. Only patients may pay,
+    and only their own bills; every staff role is refused (403) before the bill
+    is looked up. The amount always comes from the bill on the server.
     """
     bill = get_bill(db, bill_id)
-    if is_patient(current_user) and not owns_appointment(current_user, bill.appointment):
+    if not owns_appointment(current_user, bill.appointment):
         raise not_found("Bill")
     payment = payment_service.start_checkout(db, bill_id, current_user)
     return {"checkout_url": payment.checkout_url, "session_id": payment.stripe_session_id,
