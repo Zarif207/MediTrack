@@ -33,6 +33,9 @@ emulator-data/
 # Stripe CLI local config
 .stripe/
 
+# Vercel CLI link and pulled environment variables (contain secrets)
+.vercel/
+
 # ── Data ──────────────────────────────────────────────────────────────────────
 # Database dumps, backups and local databases (may contain patient data)
 *.sql

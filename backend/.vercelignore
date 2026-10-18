@@ -1,0 +1,28 @@
+# Never upload secrets or local state to Vercel (CLI deployments).
+.env
+.env.*
+*.env
+!.env.example
+*firebase-adminsdk*.json
+*service-account*.json
+*service_account*.json
+*credentials*.json
+*.pem
+*.key
+*.sql
+*.dump
+*.backup
+backups/
+
+# Local tooling and build output
+.git/
+.venv/
+venv/
+node_modules/
+dist/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.log
+.DS_Store
+.vercel/

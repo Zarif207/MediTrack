@@ -1,4 +1,5 @@
 """Firebase Admin SDK initialization."""
+import json
 import logging
 import os
 
@@ -30,7 +31,10 @@ def initialize_firebase() -> None:
 
     options = {"projectId": settings.firebase_project_id}
     try:
-        if settings.firebase_service_account_path:
+        if settings.firebase_service_account_json:
+            cred = credentials.Certificate(json.loads(settings.firebase_service_account_json.get_secret_value()))
+            firebase_admin.initialize_app(cred, options)
+        elif settings.firebase_service_account_path:
             cred = credentials.Certificate(settings.firebase_service_account_path)
             firebase_admin.initialize_app(cred, options)
         else:

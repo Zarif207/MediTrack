@@ -29,7 +29,8 @@ MediTrack/
 │   └── src/services/api.js the only API client; src/config/ role-aware routes and navigation
 ├── e2e/                    headless-Chrome end-to-end tests (Firebase Auth Emulator)
 ├── .github/workflows/ci.yml
-└── render.yaml             optional deployment blueprint (see Deployment)
+├── backend/vercel.json, frontend/vercel.json   Vercel project configuration
+└── render.yaml             alternative Render blueprint
 ```
 
 ## Prerequisites
@@ -57,6 +58,7 @@ uvicorn app.main:app --reload # http://127.0.0.1:8000, interactive docs at /docs
 | `DATABASE_URL` | `postgresql+psycopg://USER:PASSWORD@HOST:5432/meditrack_db` (`postgres://` URLs from hosts are accepted). |
 | `TEST_DATABASE_URL` | Optional. Defaults to `DATABASE_URL` with `_test` appended to the database name. |
 | `FIREBASE_SERVICE_ACCOUNT_PATH` | Absolute path to the Admin SDK service-account JSON, stored **outside** the repository. |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Alternative for hosts without secret files (Vercel): the JSON contents. Takes precedence. |
 | `FIREBASE_PROJECT_ID` | Defaults to `meditrack-7fe46`. |
 | `ALLOWED_ORIGINS` | Comma-separated CORS origins (the frontend URL). |
 | `STRIPE_SECRET_KEY` | Optional; enables online payment. Must be `sk_test_…`/`rk_test_…`: live keys are refused. |
@@ -202,57 +204,85 @@ cd frontend && npm run lint && npm run build
 GitHub Actions (`.github/workflows/ci.yml`) runs backend lint and tests against a throwaway PostgreSQL
 container, the migration runner on an empty database, and frontend lint and build. It needs no secrets.
 
-## Deployment
+## Deployment (Vercel)
 
-Recommended free setup for a student project:
+Two Vercel projects are connected to this one GitHub repository:
 
-| Part | Host | Notes |
+| Vercel project | Root Directory | Framework | What Vercel runs |
+|---|---|---|---|
+| `meditrack-web` | `frontend` | Vite | `npm run build` → static files from `dist/`, SPA rewrite in `frontend/vercel.json` |
+| `meditrack-api` | `backend` | FastAPI (auto-detected) | `app/main.py` → one Python 3.13 Vercel Function (`backend/vercel.json`, `.python-version`) |
+
+PostgreSQL comes from Neon (Vercel Marketplace, free plan). Auth stays on Firebase, and payments stay in
+Stripe **test mode**.
+
+How the backend behaves on Vercel:
+- When `VERCEL=1` (set by Vercel), the API opens no local connection pool and disables server-side
+  prepared statements. Use Neon's **pooled** connection string (host contains `-pooler`).
+- Vercel has no secret files: paste the service-account JSON into `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- Migrations do **not** run during builds. Run them yourself against each database, from `backend/`:
+  `DATABASE_URL='<direct (non-pooled) Neon URL>' python -m migrations`.
+
+**Environment variables.** Mark the secret ones *Sensitive*. Set them separately for Preview and
+Production, and point each environment at its own database.
+
+| Project | Variable | Value |
 |---|---|---|
-| Frontend | Render static site | HTTPS and custom domains included |
-| API | Render web service (free) | Sleeps when idle; the first request after a pause takes ~1 minute |
-| PostgreSQL | Neon (free) or any managed PostgreSQL | Connection string with `sslmode=require` |
-| Auth | Firebase Authentication | Existing project |
-| Payments | Stripe **test mode** | No real money moves |
+| api | `APP_ENV` | `production` (also for Preview, so the production checks apply) |
+| api | `DATABASE_URL` | Neon pooled URL (`…-pooler…/neondb?sslmode=require`) |
+| api | `FIREBASE_SERVICE_ACCOUNT_JSON` | full contents of the service-account JSON (Sensitive) |
+| api | `FIREBASE_PROJECT_ID` | `meditrack-7fe46` |
+| api | `ALLOWED_ORIGINS` | the frontend URL of the same environment, e.g. `https://meditrack-web.vercel.app` |
+| api | `PUBLIC_APP_URL` | same frontend URL (Stripe returns the browser there) |
+| api | `STRIPE_SECRET_KEY` | `sk_test_…` (Sensitive; live keys are refused) |
+| api | `STRIPE_WEBHOOK_SECRET` | `whsec_…` of that environment's webhook endpoint (Sensitive) |
+| api | `STRIPE_CURRENCY` | `usd` |
+| web | `VITE_API_BASE_URL` | the API URL of the same environment, e.g. `https://meditrack-api.vercel.app` |
+| web | `VITE_FIREBASE_API_KEY`, `…_AUTH_DOMAIN`, `…_PROJECT_ID`, `…_STORAGE_BUCKET`, `…_MESSAGING_SENDER_ID`, `…_APP_ID` | Firebase web config (public) |
+| web | `VITE_CURRENCY` | `USD` |
 
-`render.yaml` describes both Render services. **Applying it creates resources in your account**, so
-review it first. Production steps, in order:
+`VITE_*` values are baked in at build time, so redeploy the frontend after changing them. Changes to API
+variables also need a redeploy.
 
-1. **Database.** Create a Neon project and copy its connection string.
-2. **Blueprint.** Render Dashboard → New → Blueprint → this repository. Fill in each prompted value:
-   `DATABASE_URL`, `ALLOWED_ORIGINS` and `PUBLIC_APP_URL` (both the frontend URL, `https://…onrender.com`),
-   `VITE_API_BASE_URL` (the API URL) and the `VITE_FIREBASE_*` web config.
-3. **Firebase credentials.** Firebase Console → Project settings → Service accounts → Generate new private
-   key. In Render → meditrack-api → Environment → **Secret Files**, add it as
-   `firebase-service-account.json`. Never commit it.
-4. **Firebase domains.** Firebase Console → Authentication → Settings → Authorized domains → add the
-   frontend domain (needed for Firebase auth flows such as password-reset links on that domain).
-5. **Stripe (optional).** In test mode, add a webhook endpoint `https://<api>/payments/stripe/webhook`
-   with the four `checkout.session.*` events above. Set `STRIPE_SECRET_KEY` (`sk_test_…`) and that
-   endpoint's `STRIPE_WEBHOOK_SECRET` on the API. Leave both unset to disable online payment.
-6. **Deploy, then check** `https://<api>/health` → `{"status":"ok","database":"connected"}`. Sign up
-   on the live site, then create the first admin from your machine against the hosted database:
-   `cd backend && DATABASE_URL='<neon url>' python create_admin.py <uid>`.
+**Dashboard settings**
+- **meditrack-api → Deployment Protection:** turn Vercel Authentication **off** for this project. The
+  browser calls the API from another origin without Vercel's cookie, and Stripe webhooks can't log in;
+  with protection on, both are blocked. The API has its own Firebase authentication and hides `/docs`
+  in production.
+- **Both projects → Git:** under Build and Deployment → Root Directory, enable *Skip deployments when
+  there are no changes to the root directory*. Every push to `main` deploys **production**.
+- **Firebase Console → Authentication → Settings → Authorized domains:** add the frontend domains.
+- **Stripe (test mode) → Webhooks:** endpoint `https://<api>/payments/stripe/webhook` with the four
+  `checkout.session.*` events listed above, one per environment.
 
-The API's start command runs `python -m migrations` before `uvicorn`. With `APP_ENV=production` the API
-**refuses to start** if `ALLOWED_ORIGINS` is `*` or localhost, `DB_ECHO` is on,
-`FIREBASE_AUTH_EMULATOR_HOST` is set, Firebase credentials fail to load, a live Stripe key is used, or
-Stripe is enabled without a webhook secret and an `https://` `PUBLIC_APP_URL`. It also hides `/docs`.
+After deploying, check `https://<api>/health` → `{"status":"ok","database":"connected"}`. Then sign up on
+the site and promote the first admin from your machine:
+`cd backend && DATABASE_URL='<neon url>' python create_admin.py <uid>`.
 
-**Backups.** Use your database host's point-in-time restore and check its retention period. For a manual
-copy, run `pg_dump "$DATABASE_URL" > meditrack-YYYYMMDD.sql` and keep it outside the repository; dumps are
+**Vercel limitations to know**
+- Functions run in **UTC** (`TZ` cannot be set). Booking windows and timestamps use the server clock.
+- Function bundle limit 500 MB (this API is ~280 MB of dependencies). Request body limit 4.5 MB.
+  `maxDuration` is 30 s.
+- Cold starts add latency to the first request after idle.
+- Preview URLs change per deployment. Use stable aliases (`vercel alias`) or branch URLs in
+  `ALLOWED_ORIGINS`, `PUBLIC_APP_URL` and `VITE_API_BASE_URL`.
+
+**Backups.** Use Neon's point-in-time restore and check your plan's retention. For a manual copy, run
+`pg_dump "$DATABASE_URL" > meditrack-YYYYMMDD.sql` and keep it outside the repository; dumps are
 git-ignored because they contain patient data.
 
 **Troubleshooting**
 
 | Symptom | Likely cause |
 |---|---|
-| API fails at startup with a list of problems | One of the production checks above; the message names it |
-| Every API call returns `503 Authentication is temporarily unavailable` | Secret file missing or wrong `FIREBASE_SERVICE_ACCOUNT_PATH` |
-| Browser shows CORS errors | `ALLOWED_ORIGINS` doesn't exactly match the frontend origin (scheme, host, no trailing slash) |
-| Firebase reports `auth/unauthorized-domain` | Step 4 |
-| Deep links such as `/bills` return 404 | Static site is missing the rewrite to `/index.html` |
-| Bills stay pending after paying | Webhook URL/secret mismatch; check Stripe → Webhooks → delivery attempts |
-| `/health` returns 503 | Database URL wrong, or the database is asleep/unreachable |
+| Function crashes at startup with a list of problems | A production check (CORS, Stripe URLs, emulator, Firebase credential); the log names it |
+| Every API call returns `503 Authentication is temporarily unavailable` | `FIREBASE_SERVICE_ACCOUNT_JSON` missing or not valid JSON |
+| Browser CORS errors, or API responses are a Vercel login page | `ALLOWED_ORIGINS` mismatch, or Deployment Protection still on for the API |
+| Bills stay pending after paying | Webhook URL/secret mismatch; Stripe → Webhooks → delivery attempts |
+| `/health` returns 503 | Wrong `DATABASE_URL`, or the database is suspended/unreachable |
+
+`render.yaml` remains as an alternative single-dashboard setup on Render (long-running server instead of
+functions).
 
 ## Secrets and credential rotation
 
@@ -271,7 +301,7 @@ Removing a file from Git does not remove it from history. Rotation is the fix.
 
 - No per-doctor working hours; one clinic-wide booking window (30-minute slots, 09:00–17:00, up to 180 days ahead).
 - No API rate limiting (Firebase throttles sign-in).
-- Timestamps use the server's local clock (no time-zone handling). Set the host's `TZ` if needed.
+- Timestamps use the server's local clock (no time-zone handling); on Vercel that is UTC.
 - Stripe refunds are done in the Stripe Dashboard; MediTrack does not process refund webhooks.
 - `npm audit` reports `@grpc/grpc-js` via Firebase's Firestore package. The app imports only
   `firebase/app` and `firebase/auth`, so it is not in the browser bundle. No compatible fix exists yet.

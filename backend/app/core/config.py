@@ -1,7 +1,7 @@
 import os
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Keep this file outside the repository and never commit it.
     # Leave unset to use Application Default Credentials (ADC).
     firebase_service_account_path: str | None = None
+    # Alternative for hosts without secret files (e.g. Vercel): the whole
+    # service-account JSON as one environment variable. Takes precedence.
+    firebase_service_account_json: SecretStr | None = None
     firebase_project_id: str = "meditrack-7fe46"
 
     # ── HTTP ──────────────────────────────────────────────────────────────────
@@ -84,6 +87,11 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"
+
+    @property
+    def is_serverless(self) -> bool:
+        # Vercel sets VERCEL=1 in its builds and functions.
+        return bool(os.getenv("VERCEL"))
 
     @model_validator(mode="after")
     def _production_guards(self) -> "Settings":
