@@ -12,6 +12,8 @@ Every step only adds, so this is safe on a new database, an old one, or one
 that is already up to date. appointment_ownership checks existing data first
 and stops without changing anything if it finds rows it cannot migrate.
 """
+from sqlalchemy import inspect
+
 import app.models  # noqa: F401  (registers every table)
 from app.database.base import Base
 from app.database.connection import engine
@@ -26,7 +28,10 @@ STEPS = (add_patient_link, appointments_firebase_uid, appointment_ownership, add
 
 
 def main() -> None:
-    print(f"Database: {engine.url.database}")
+    print(f"Target: database {engine.url.database!r} on host {engine.url.host!r}")
+    existing = set(inspect(engine).get_table_names())
+    missing = sorted(t for t in Base.metadata.tables if t not in existing)
+    print(f"Existing tables: {len(existing)}; tables to create: {missing or 'none'}")
     Base.metadata.create_all(bind=engine)
     print("✓ Missing tables created; existing tables untouched.")
     for step in STEPS:

@@ -1,9 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "python -m migrations.vercel_build",
   "functions": {
     "app/main.py": {
       "maxDuration": 30,
-      "excludeFiles": "{tests/**,migrations/**,.venv/**,**/__pycache__/**,.pytest_cache/**,create_admin.py,ruff.toml,requirements-dev.txt}"
+      "excludeFiles": "{.env,.env.*,*.env,.venv/**,tests/**,migrations/**,**/__pycache__/**,.pytest_cache/**,create_admin.py,ruff.toml,requirements-dev.txt}"
     }
   }
 }

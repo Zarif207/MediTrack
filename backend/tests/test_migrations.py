@@ -44,3 +44,55 @@ def test_upgrades_an_older_schema_and_keeps_rows():
     with engine.connect() as conn:
         assert conn.execute(text(
             "SELECT role FROM user_profiles WHERE firebase_uid = 'MIGRATE_KEEP'")).scalar() == "admin"
+
+
+def test_vercel_build_skips_migrations_unless_requested(monkeypatch, capsys):
+    import migrations.__main__ as runner
+    from migrations import vercel_build
+
+    calls = []
+    monkeypatch.setattr(runner, "main", lambda: calls.append("migrated"))
+    monkeypatch.delenv("MIGRATE", raising=False)
+    monkeypatch.setenv("VERCEL_ENV", "production")
+    vercel_build.main()
+    assert calls == [] and "skipped" in capsys.readouterr().out
+
+
+def test_vercel_build_refuses_a_mismatched_environment(monkeypatch):
+    import pytest
+
+    import migrations.__main__ as runner
+    from migrations import vercel_build
+
+    monkeypatch.setattr(runner, "main", lambda: pytest.fail("must not migrate"))
+    monkeypatch.setenv("MIGRATE", "production")
+    monkeypatch.setenv("VERCEL_TARGET_ENV", "preview")
+    with pytest.raises(SystemExit, match="Refusing"):
+        vercel_build.main()
+
+
+def test_vercel_build_migrates_the_named_environment(monkeypatch):
+    import migrations.__main__ as runner
+    from migrations import vercel_build
+
+    calls = []
+    monkeypatch.setattr(runner, "main", lambda: calls.append("migrated"))
+    monkeypatch.setenv("MIGRATE", "production")
+    monkeypatch.setenv("VERCEL_TARGET_ENV", "production")
+    vercel_build.main()
+    assert calls == ["migrated"]
+
+
+def test_vercel_build_inspect_reports_and_stops_without_migrating(monkeypatch, capsys):
+    import pytest
+
+    import migrations.__main__ as runner
+    from migrations import vercel_build
+
+    monkeypatch.setattr(runner, "main", lambda: pytest.fail("must not migrate"))
+    monkeypatch.setenv("MIGRATE", "inspect")
+    monkeypatch.setenv("VERCEL_TARGET_ENV", "production")
+    with pytest.raises(SystemExit, match="Inspection only"):
+        vercel_build.main()
+    out = capsys.readouterr().out
+    assert "meditrack_db_test" in out and "user_profiles:" in out
