@@ -95,4 +95,4 @@ def test_vercel_build_inspect_reports_and_stops_without_migrating(monkeypatch, c
     with pytest.raises(SystemExit, match="Inspection only"):
         vercel_build.main()
     out = capsys.readouterr().out
-    assert "meditrack_db_test" in out and "user_profiles:" in out
+    assert repr(engine.url.database) in out and "user_profiles:" in out
