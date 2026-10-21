@@ -7,7 +7,6 @@ what it needs.
 
 > MediTrack is an academic demonstration, not a healthcare provider. Use synthetic data only.
 
-[![CI](https://github.com/Zarif207/MediTrack/actions/workflows/ci.yml/badge.svg)](https://github.com/Zarif207/MediTrack/actions/workflows/ci.yml)
 
 ## Architecture
 
