@@ -11,6 +11,7 @@ router = APIRouter(tags=["Health"])
 
 @router.get("/health")
 def health_check(db: Session = Depends(get_db)) -> dict[str, str]:
+    """Liveness check for uptime monitors and Vercel: confirms the API can reach PostgreSQL."""
     try:
         db.execute(text("SELECT 1"))
         return {
